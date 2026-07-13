@@ -44,9 +44,7 @@ export default function LoginScreen() {
         />
         <div className="relative z-10 flex flex-col justify-between p-12 text-white">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 backdrop-blur ring-1 ring-white/20">
-              <Car className="h-7 w-7" />
-            </div>
+            <img src="/logo-symbol.png" alt="CarCenter" className="h-12 w-12 object-contain" />
             <div>
               <p className="text-lg font-bold tracking-tight">CarCenter PRO</p>
               <p className="text-xs text-primary-200 font-medium">Finance 3.0</p>
@@ -78,9 +76,7 @@ export default function LoginScreen() {
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-md animate-fade-in">
           <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-600 text-white">
-              <Car className="h-6 w-6" />
-            </div>
+            <img src="/logo-symbol.png" alt="CarCenter" className="h-11 w-11 object-contain" />
             <div>
               <p className="text-base font-bold text-ink-900">CarCenter PRO</p>
               <p className="text-xs text-ink-500 font-medium">Finance 3.0</p>
