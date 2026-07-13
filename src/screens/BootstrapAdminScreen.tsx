@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Car, ShieldCheck, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
+import { ShieldCheck, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { bootstrapAdmin } from '../services/auth.service';
 
@@ -49,11 +49,8 @@ export default function BootstrapAdminScreen() {
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-primary-50 via-white to-primary-50">
       <div className="w-full max-w-lg animate-fade-in">
         <div className="flex flex-col items-center mb-8">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg shadow-primary-600/20">
-            <Car className="h-9 w-9" />
-          </div>
-          <h1 className="mt-4 text-2xl font-bold text-ink-900 tracking-tight">CarCenter PRO Finance</h1>
-          <p className="text-sm text-ink-500 font-medium">Finance 3.0</p>
+          <img src="/logo.svg" alt="CarCenter PRO Finance" className="w-56 max-w-[80vw]" />
+          <p className="mt-2 text-sm text-ink-500 font-medium">Centro de Inteligência Empresarial</p>
         </div>
 
         <div className="card p-8">

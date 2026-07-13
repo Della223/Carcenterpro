@@ -37,7 +37,7 @@ function getInitials(name: string): string {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [needsBootstrap, setNeedsBootstrap] = useState(true);
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
 
   const loadUserProfile = async (authId: string, email: string): Promise<AppUser | null> => {
@@ -69,11 +69,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('active', true)
         .limit(1);
 
-      if (!error) {
+      if (error) {
+        setNeedsBootstrap(true);
+      } else {
         setNeedsBootstrap((data ?? []).length === 0);
       }
     } catch {
-      setNeedsBootstrap(false);
+      setNeedsBootstrap(true);
     } finally {
       setBootstrapLoading(false);
     }
