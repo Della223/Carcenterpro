@@ -1,15 +1,38 @@
-import { Car, ShieldCheck, TrendingUp, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import { Car, ShieldCheck, TrendingUp, Lock, Mail, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { USER_LIST } from '../context/AuthContext';
 
-const ROLE_LABELS: Record<string, string> = {
-  admin: 'Administradora',
-  financeiro: 'Financeiro',
-  operador: 'Operador',
-};
+type Mode = 'login' | 'recovery';
 
 export default function LoginScreen() {
-  const { login } = useAuth();
+  const { signIn, resetPassword } = useAuth();
+  const [mode, setMode] = useState<Mode>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [recoverySent, setRecoverySent] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      if (mode === 'login') {
+        const { error: signInError } = await signIn(email, password);
+        if (signInError) setError(signInError);
+      } else {
+        const { error: recoveryError } = await resetPassword(email);
+        if (recoveryError) setError(recoveryError);
+        else setRecoverySent(true);
+      }
+    } catch {
+      setError('Erro inesperado. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex bg-ink-50">
@@ -29,7 +52,6 @@ export default function LoginScreen() {
               <p className="text-xs text-primary-200 font-medium">Finance 3.0</p>
             </div>
           </div>
-
           <div className="space-y-6">
             <h1 className="text-4xl font-bold leading-tight tracking-tight">
               Gestão financeira<br />de ponta a ponta<br />para o seu centro automotivo.
@@ -48,12 +70,11 @@ export default function LoginScreen() {
               </div>
             </div>
           </div>
-
           <p className="text-xs text-primary-300">© 2025 CarCenter PRO. Todos os direitos reservados.</p>
         </div>
       </div>
 
-      {/* User selection panel */}
+      {/* Login form */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-md animate-fade-in">
           <div className="lg:hidden flex items-center gap-3 mb-8">
@@ -66,27 +87,111 @@ export default function LoginScreen() {
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold text-ink-900 tracking-tight">Selecione seu perfil</h2>
-          <p className="mt-1 text-sm text-ink-500">Escolha o usuário para acessar o sistema.</p>
+          {mode === 'recovery' && (
+            <button
+              onClick={() => { setMode('login'); setRecoverySent(false); setError(null); }}
+              className="flex items-center gap-1.5 text-sm text-ink-500 hover:text-ink-700 mb-4 transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Voltar para o login
+            </button>
+          )}
 
-          <div className="mt-8 space-y-3">
-            {USER_LIST.map((u) => (
+          <h2 className="text-2xl font-bold text-ink-900 tracking-tight">
+            {mode === 'login' ? 'Acessar o sistema' : 'Recuperar senha'}
+          </h2>
+          <p className="mt-1 text-sm text-ink-500">
+            {mode === 'login'
+              ? 'Entre com suas credenciais para continuar.'
+              : 'Informe seu e-mail para receber as instruções de recuperação.'}
+          </p>
+
+          {recoverySent ? (
+            <div className="mt-8 rounded-xl border border-success-200 bg-success-50 p-4">
+              <p className="text-sm text-success-800 font-medium">
+                Se uma conta existir com este e-mail, você receberá as instruções de recuperação.
+              </p>
               <button
-                key={u.email}
-                onClick={() => login(u.email)}
-                className="group flex w-full items-center gap-4 rounded-xl border border-ink-200 bg-white p-4 text-left transition-all hover:border-primary-300 hover:bg-primary-50 hover:shadow-md"
+                onClick={() => { setMode('login'); setRecoverySent(false); setEmail(''); }}
+                className="mt-3 text-sm font-medium text-success-700 hover:text-success-800"
               >
-                <span className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-primary-100 text-base font-bold text-primary-700 transition-colors group-hover:bg-primary-600 group-hover:text-white">
-                  {u.avatarInitials}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-ink-900">{u.name}</p>
-                  <p className="text-xs text-ink-500">{ROLE_LABELS[u.role] ?? u.role}</p>
-                </div>
-                <ChevronRight className="h-5 w-5 text-ink-300 transition-colors group-hover:text-primary-500" />
+                Voltar para o login
               </button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">E-mail</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="input-field pl-10"
+                    placeholder="seu@email.com"
+                    autoComplete="email"
+                  />
+                </div>
+              </div>
+
+              {mode === 'login' && (
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-1.5">Senha</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="input-field pl-10 pr-10"
+                      placeholder="••••••••"
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-600"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="rounded-lg bg-error-50 border border-error-200 p-3">
+                  <p className="text-sm text-error-700">{error}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn-primary w-full justify-center"
+              >
+                {loading
+                  ? 'Aguarde...'
+                  : mode === 'login'
+                    ? 'Entrar'
+                    : 'Enviar instruções'}
+              </button>
+
+              {mode === 'login' && (
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => { setMode('recovery'); setError(null); }}
+                    className="text-sm text-ink-500 hover:text-primary-600 transition-colors"
+                  >
+                    Esqueceu sua senha?
+                  </button>
+                </div>
+              )}
+            </form>
+          )}
         </div>
       </div>
     </div>

@@ -1,9 +1,12 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
+import type { User } from '../types';
 
 export type UserRole = 'admin' | 'financeiro' | 'operador';
 
 export interface AppUser {
   id: string;
+  auth_id: string;
   name: string;
   email: string;
   role: UserRole;
@@ -13,70 +16,173 @@ export interface AppUser {
 interface AuthContextValue {
   user: AppUser | null;
   loading: boolean;
-  login: (email: string) => void;
-  logout: () => void;
+  needsBootstrap: boolean;
+  bootstrapLoading: boolean;
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ error: string | null }>;
+  updatePassword: (newPassword: string) => Promise<{ error: string | null }>;
+  refreshUser: () => Promise<void>;
+  checkBootstrap: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-const USERS: Record<string, AppUser> = {
-  'nicole@carcenter.pro': {
-    id: 'cce66177-0122-4f1a-84a2-6a501f4a1978',
-    name: 'Nicole',
-    email: 'nicole@carcenter.pro',
-    role: 'admin',
-    avatarInitials: 'NI',
-  },
-  'carlinhos@carcenter.pro': {
-    id: '7777f677-b4c2-474e-bef9-3375fbb8235d',
-    name: 'Carlinhos',
-    email: 'carlinhos@carcenter.pro',
-    role: 'financeiro',
-    avatarInitials: 'CA',
-  },
-  'daniel@carcenter.pro': {
-    id: '793c85c3-e8cf-4514-acd8-069094b3fc55',
-    name: 'Daniel',
-    email: 'daniel@carcenter.pro',
-    role: 'operador',
-    avatarInitials: 'DA',
-  },
-};
-
-export const USER_LIST = Object.values(USERS);
-
-const STORAGE_KEY = 'carcenter-pro-auth-v2';
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0]?.substring(0, 2).toUpperCase() ?? '??';
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [bootstrapLoading, setBootstrapLoading] = useState(true);
 
-  useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    }
-    setLoading(false);
-  }, []);
+  const loadUserProfile = async (authId: string, email: string): Promise<AppUser | null> => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('auth_id', authId)
+      .maybeSingle();
 
-  const login = (email: string) => {
-    const foundUser = USERS[email.toLowerCase()];
-    if (!foundUser) return;
-    setUser(foundUser);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(foundUser));
+    if (error || !data) return null;
+
+    return {
+      id: data.id,
+      auth_id: data.auth_id,
+      name: data.name,
+      email: data.email,
+      role: data.role as UserRole,
+      avatarInitials: getInitials(data.name),
+    };
   };
 
-  const logout = () => {
+  const checkBootstrap = async () => {
+    setBootstrapLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .eq('role', 'admin')
+        .eq('active', true)
+        .limit(1);
+
+      if (!error) {
+        setNeedsBootstrap((data ?? []).length === 0);
+      }
+    } catch {
+      setNeedsBootstrap(false);
+    } finally {
+      setBootstrapLoading(false);
+    }
+  };
+
+  const refreshUser = async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) {
+      const profile = await loadUserProfile(
+        sessionData.session.user.id,
+        sessionData.session.user.email ?? ''
+      );
+      if (profile) {
+        setUser(profile);
+        return;
+      }
+    }
     setUser(null);
-    localStorage.removeItem(STORAGE_KEY);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const init = async () => {
+      await checkBootstrap();
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!mounted) return;
+
+      if (sessionData.session?.user) {
+        const profile = await loadUserProfile(
+          sessionData.session.user.id,
+          sessionData.session.user.email ?? ''
+        );
+        if (mounted) {
+          if (profile) setUser(profile);
+          setLoading(false);
+        }
+      } else {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    init();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      (async () => {
+        if (session?.user) {
+          const profile = await loadUserProfile(session.user.id, session.user.email ?? '');
+          if (mounted && profile) setUser(profile);
+        } else {
+          if (mounted) setUser(null);
+        }
+      })();
+    });
+
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const signIn = async (email: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error.message };
+
+    if (data.user) {
+      const profile = await loadUserProfile(data.user.id, data.user.email ?? '');
+      if (profile) {
+        setUser(profile);
+        return { error: null };
+      }
+      return { error: 'Perfil de usuário não encontrado. Contate o administrador.' };
+    }
+    return { error: 'Falha ao entrar.' };
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  const resetPassword = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}`,
+    });
+    return { error: error?.message ?? null };
+  };
+
+  const updatePassword = async (newPassword: string) => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    return { error: error?.message ?? null };
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        needsBootstrap,
+        bootstrapLoading,
+        signIn,
+        signOut,
+        resetPassword,
+        updatePassword,
+        refreshUser,
+        checkBootstrap,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

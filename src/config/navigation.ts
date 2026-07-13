@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Settings,
   HelpCircle,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -19,6 +20,7 @@ export type ScreenId =
   | 'dre'
   | 'orcamentos'
   | 'relatorios'
+  | 'usuarios'
   | 'configuracoes'
   | 'ajuda';
 
@@ -37,6 +39,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'dre', label: 'DRE', icon: FileText, description: 'Demonstração do resultado' },
   { id: 'orcamentos', label: 'Orçamentos', icon: Target, description: 'Orçado x realizado' },
   { id: 'relatorios', label: 'Relatórios', icon: ClipboardList, description: 'Análises e exportações' },
+  { id: 'usuarios', label: 'Usuários', icon: Users, description: 'Gerenciar usuários e perfis' },
   { id: 'configuracoes', label: 'Configurações', icon: Settings, description: 'Preferências do sistema' },
   { id: 'ajuda', label: 'Ajuda', icon: HelpCircle, description: 'Suporte e documentação' },
 ];

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, Download, Search, Pencil, Trash2, Eye, CreditCard, DollarSign, Layers, Building2, Tag, Calendar } from 'lucide-react';
+import { Plus, Download, Search, Pencil, Trash2, Eye, CreditCard, DollarSign, Layers, Building2, Tag, Calendar, History, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ui/Toast';
 import Modal from '../components/ui/Modal';
@@ -11,17 +11,48 @@ import KPICard from '../components/ui/KPICard';
 import Badge from '../components/ui/Badge';
 import {
   fetchExpenses, createExpense, updateExpense, deleteExpense,
+  recalculateInstallments,
   fetchExpenseCategories, fetchSubcategories, fetchCostCenters,
   fetchSuppliers, findOrCreateSupplier,
 } from '../services/expense.service';
 import { createAuditLog } from '../services/audit.service';
+import { logChanges, fetchChangeHistory } from '../services/change-history.service';
 import { formatCurrency, formatDate, getCurrentCompetence, getCompetenceString, downloadCSV } from '../utils/format';
-import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier } from '../types';
+import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, ChangeHistory } from '../types';
 
 const MONTH_NAMES = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ];
+
+const STORAGE_KEY = 'carcenter_despesas_filters';
+
+interface FilterState {
+  competenceMonth: string;
+  competenceYear: string;
+  categoryId: string;
+  costCenterId: string;
+  searchText: string;
+}
+
+function getDefaultFilters(): FilterState {
+  const { month, year } = getCurrentCompetence();
+  return {
+    competenceMonth: String(month),
+    competenceYear: String(year),
+    categoryId: '',
+    costCenterId: '',
+    searchText: '',
+  };
+}
+
+function getDefaultDateRange(month: string, year: string): { start: string; end: string } {
+  const m = Number(month);
+  const y = Number(year);
+  const start = `${y}-${String(m).padStart(2, '0')}-01`;
+  const end = new Date().toISOString().split('T')[0];
+  return { start, end };
+}
 
 interface ExpenseForm {
   competence_month: number;
@@ -40,7 +71,18 @@ interface ExpenseForm {
 export default function DespesasScreen() {
   const { user } = useAuth();
   const toast = useToast();
-  const { month, year } = getCurrentCompetence();
+
+  const [filters, setFilters] = useState<FilterState>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : getDefaultFilters();
+    } catch {
+      return getDefaultFilters();
+    }
+  });
+
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -50,29 +92,47 @@ export default function DespesasScreen() {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
-  const [filterCategory, setFilterCategory] = useState('');
-  const [filterCostCenter, setFilterCostCenter] = useState('');
-  const [searchText, setSearchText] = useState('');
-
   const [modalOpen, setModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [form, setForm] = useState<ExpenseForm>({
-    competence_month: month, competence_year: year, cost_center_id: '', category_id: '',
-    subcategory_id: '', supplier_name: '', supplier_id: null,
-    payment_date: new Date().toISOString().split('T')[0], total_amount: '',
-    installment_count: 1, notes: '',
+    competence_month: getCurrentCompetence().month,
+    competence_year: getCurrentCompetence().year,
+    cost_center_id: '', category_id: '', subcategory_id: '',
+    supplier_name: '', supplier_id: null,
+    payment_date: new Date().toISOString().split('T')[0],
+    total_amount: '', installment_count: 1, notes: '',
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
   const [viewTarget, setViewTarget] = useState<Expense | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<Expense | null>(null);
+  const [history, setHistory] = useState<ChangeHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
-  // Supplier autocomplete state
+  // Recalculate modal
+  const [recalcTarget, setRecalcTarget] = useState<Expense | null>(null);
+  const [recalcForm, setRecalcForm] = useState({ total_amount: '', installment_count: 1, payment_date: '' });
+  const [recalcSaving, setRecalcSaving] = useState(false);
+
+  // Supplier autocomplete
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierSuggestions, setSupplierSuggestions] = useState<Supplier[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const supplierInputRef = useRef<HTMLInputElement>(null);
+
+  // Persist filters
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  }, [filters]);
+
+  // Update date range when competence changes
+  useEffect(() => {
+    const { start, end } = getDefaultDateRange(filters.competenceMonth, filters.competenceYear);
+    setDateStart(start);
+    setDateEnd(end);
+  }, [filters.competenceMonth, filters.competenceYear]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -99,38 +159,35 @@ export default function DespesasScreen() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Filter categories by selected cost center
   const filteredCategories = useMemo(() => {
     if (!form.cost_center_id) return [];
-    return allCategories.filter(c => c.cost_center_id === form.cost_center_id);
+    return allCategories.filter((c) => c.cost_center_id === form.cost_center_id);
   }, [allCategories, form.cost_center_id]);
 
-  // Filter subcategories by selected category
   const filteredSubcategories = useMemo(() => {
     if (!form.category_id) return [];
-    return allSubcategories.filter(s => s.category_id === form.category_id);
+    return allSubcategories.filter((s) => s.category_id === form.category_id);
   }, [allSubcategories, form.category_id]);
 
-  // Supplier autocomplete
   useEffect(() => {
     if (!supplierSearch.trim() || !showSuggestions) {
       setSupplierSuggestions([]);
       return;
     }
     const filtered = suppliers
-      .filter(s => s.name.toLowerCase().includes(supplierSearch.toLowerCase()))
+      .filter((s) => s.name.toLowerCase().includes(supplierSearch.toLowerCase()))
       .slice(0, 8);
     setSupplierSuggestions(filtered);
   }, [supplierSearch, suppliers, showSuggestions]);
 
   const handleSupplierChange = (value: string) => {
-    setForm(prev => ({ ...prev, supplier_name: value, supplier_id: null }));
+    setForm((prev) => ({ ...prev, supplier_name: value, supplier_id: null }));
     setSupplierSearch(value);
     setShowSuggestions(true);
   };
 
   const handleSupplierSelect = (supplier: Supplier) => {
-    setForm(prev => ({ ...prev, supplier_name: supplier.name, supplier_id: supplier.id }));
+    setForm((prev) => ({ ...prev, supplier_name: supplier.name, supplier_id: supplier.id }));
     setSupplierSearch(supplier.name);
     setShowSuggestions(false);
   };
@@ -141,22 +198,24 @@ export default function DespesasScreen() {
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((e) => {
-      if (filterCategory && e.category_id !== filterCategory) return false;
-      if (filterCostCenter && e.cost_center_id !== filterCostCenter) return false;
-      if (searchText) {
-        const search = searchText.toLowerCase();
+      if (filters.categoryId && e.category_id !== filters.categoryId) return false;
+      if (filters.costCenterId && e.cost_center_id !== filters.costCenterId) return false;
+      if (dateStart && e.payment_date && e.payment_date < dateStart) return false;
+      if (dateEnd && e.payment_date && e.payment_date > dateEnd) return false;
+      if (filters.searchText) {
+        const search = filters.searchText.toLowerCase();
         if (!e.supplier?.toLowerCase().includes(search) && !e.description?.toLowerCase().includes(search)) return false;
       }
       return true;
     });
-  }, [expenses, filterCategory, filterCostCenter, searchText]);
+  }, [expenses, filters, dateStart, dateEnd]);
 
   const kpis = useMemo(() => {
     let totalCompetence = 0;
     let totalDespesasMes = 0;
     let totalParcelas = 0;
-    const currentMonth = month;
-    const currentYear = year;
+    const currentMonth = Number(filters.competenceMonth);
+    const currentYear = Number(filters.competenceYear);
 
     for (const e of filteredExpenses) {
       totalCompetence += Number(e.total_amount);
@@ -170,9 +229,10 @@ export default function DespesasScreen() {
       }
     }
     return { totalCompetence, totalDespesasMes, totalParcelas };
-  }, [filteredExpenses, month, year]);
+  }, [filteredExpenses, filters.competenceMonth, filters.competenceYear]);
 
   const handleOpenNew = () => {
+    const { month, year } = getCurrentCompetence();
     setEditingExpense(null);
     setForm({
       competence_month: month, competence_year: year, cost_center_id: '', category_id: '',
@@ -226,7 +286,6 @@ export default function DespesasScreen() {
     try {
       const auditUser = user?.id ?? null;
 
-      // Handle optional supplier: find or create if name is provided
       let supplierId: string | null = form.supplier_id;
       const supplierName = form.supplier_name.trim();
       if (supplierName && !supplierId) {
@@ -251,9 +310,31 @@ export default function DespesasScreen() {
       };
 
       if (editingExpense) {
+        const oldValues: Record<string, unknown> = {
+          competence_month: editingExpense.competence_month,
+          competence_year: editingExpense.competence_year,
+          cost_center_id: editingExpense.cost_center_id,
+          category_id: editingExpense.category_id,
+          subcategory_id: editingExpense.subcategory_id,
+          supplier: editingExpense.supplier,
+          payment_date: editingExpense.payment_date,
+          notes: editingExpense.notes,
+        };
+        const newValues: Record<string, unknown> = {
+          competence_month: form.competence_month,
+          competence_year: form.competence_year,
+          cost_center_id: form.cost_center_id,
+          category_id: form.category_id,
+          subcategory_id: form.subcategory_id || null,
+          supplier: supplierName || null,
+          payment_date: form.payment_date,
+          notes: form.notes || null,
+        };
+
         const { payment_date, ...updateData } = input;
         await updateExpense(editingExpense.id, { ...updateData, payment_date });
-        await createAuditLog(auditUser, 'despesas', 'update', editingExpense.id, null, updateData);
+        await logChanges('expenses', editingExpense.id, auditUser, oldValues, newValues);
+        await createAuditLog(auditUser, 'despesas', 'update', editingExpense.id, oldValues, newValues);
         toast.success('Despesa atualizada com sucesso.');
       } else {
         const created = await createExpense(input);
@@ -284,6 +365,72 @@ export default function DespesasScreen() {
     }
   };
 
+  const handleOpenRecalc = (expense: Expense) => {
+    setRecalcTarget(expense);
+    setRecalcForm({
+      total_amount: String(expense.total_amount),
+      installment_count: expense.installment_count,
+      payment_date: expense.payment_date ?? expense.installments?.[0]?.due_date ?? new Date().toISOString().split('T')[0],
+    });
+  };
+
+  const handleRecalcSave = async () => {
+    if (!recalcTarget) return;
+    if (!recalcForm.total_amount || Number(recalcForm.total_amount) <= 0) {
+      toast.error('Valor deve ser maior que zero.');
+      return;
+    }
+    if (recalcForm.installment_count < 1 || recalcForm.installment_count > 120) {
+      toast.error('Parcelas deve ser entre 1 e 120.');
+      return;
+    }
+    setRecalcSaving(true);
+    try {
+      const oldValues = {
+        total_amount: recalcTarget.total_amount,
+        installment_count: recalcTarget.installment_count,
+        payment_date: recalcTarget.payment_date,
+      };
+      const newValues = {
+        total_amount: Number(recalcForm.total_amount),
+        installment_count: recalcForm.installment_count,
+        payment_date: recalcForm.payment_date,
+      };
+
+      await recalculateInstallments(
+        recalcTarget.id,
+        Number(recalcForm.total_amount),
+        Number(recalcForm.installment_count),
+        recalcForm.payment_date,
+        recalcTarget.competence_month,
+        recalcTarget.competence_year
+      );
+      await logChanges('expenses', recalcTarget.id, user?.id ?? null, oldValues, newValues);
+      await createAuditLog(user?.id ?? null, 'despesas', 'recalculate', recalcTarget.id, oldValues, newValues);
+      toast.success('Parcelas recalculadas com sucesso.');
+      setRecalcTarget(null);
+      await loadData();
+    } catch (err) {
+      toast.error('Erro ao recalcular parcelas.');
+      console.error(err);
+    } finally {
+      setRecalcSaving(false);
+    }
+  };
+
+  const handleOpenHistory = async (expense: Expense) => {
+    setHistoryTarget(expense);
+    setHistoryLoading(true);
+    try {
+      const data = await fetchChangeHistory('expenses', expense.id);
+      setHistory(data);
+    } catch {
+      setHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   const handleExport = () => {
     const headers = ['Competência', 'Fornecedor', 'Centro de Custo', 'Categoria', 'Subcategoria', 'Valor Total', 'Parcelas', 'Data Pagamento'];
     const rows = filteredExpenses.map((e) => [
@@ -300,21 +447,77 @@ export default function DespesasScreen() {
     toast.success('Exportação concluída com sucesso.');
   };
 
+  const handleClearFilters = () => {
+    const defaults = getDefaultFilters();
+    setFilters(defaults);
+    const { start, end } = getDefaultDateRange(defaults.competenceMonth, defaults.competenceYear);
+    setDateStart(start);
+    setDateEnd(end);
+  };
+
+  const fieldLabels: Record<string, string> = {
+    competence_month: 'Competência (Mês)',
+    competence_year: 'Competência (Ano)',
+    cost_center_id: 'Centro de Custo',
+    category_id: 'Categoria',
+    subcategory_id: 'Subcategoria',
+    supplier: 'Fornecedor',
+    payment_date: 'Data do Pagamento',
+    total_amount: 'Valor Total',
+    installment_count: 'Número de Parcelas',
+    notes: 'Observações',
+  };
+
   return (
     <div className="space-y-6">
+      {/* Action buttons - TOP */}
+      <div className="flex justify-end gap-3">
+        <button onClick={handleExport} className="btn-secondary"><Download className="h-4 w-4" />Exportar</button>
+        <button onClick={handleOpenNew} className="btn-primary"><Plus className="h-4 w-4" />Nova Despesa</button>
+      </div>
+
       {/* Filters */}
       <div className="card p-4">
         <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs font-medium text-ink-500 mb-1">Competência (Mês)</label>
+            <select
+              value={filters.competenceMonth}
+              onChange={(e) => setFilters({ ...filters, competenceMonth: e.target.value })}
+              className="input-field"
+            >
+              {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-500 mb-1">Competência (Ano)</label>
+            <input
+              type="number"
+              min={2000}
+              max={2100}
+              value={filters.competenceYear}
+              onChange={(e) => setFilters({ ...filters, competenceYear: e.target.value })}
+              className="input-field w-24"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-500 mb-1">Data Inicial</label>
+            <input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="input-field" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-500 mb-1">Data Final</label>
+            <input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="input-field" />
+          </div>
           <div className="flex-1 min-w-[180px]">
             <label className="block text-xs font-medium text-ink-500 mb-1">Categoria</label>
-            <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="input-field">
+            <select value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })} className="input-field">
               <option value="">Todas</option>
               {allCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div className="flex-1 min-w-[180px]">
             <label className="block text-xs font-medium text-ink-500 mb-1">Centro de Custo</label>
-            <select value={filterCostCenter} onChange={(e) => setFilterCostCenter(e.target.value)} className="input-field">
+            <select value={filters.costCenterId} onChange={(e) => setFilters({ ...filters, costCenterId: e.target.value })} className="input-field">
               <option value="">Todos</option>
               {costCenters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -323,10 +526,10 @@ export default function DespesasScreen() {
             <label className="block text-xs font-medium text-ink-500 mb-1">Busca</label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-              <input type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Buscar..." className="input-field pl-10" />
+              <input type="text" value={filters.searchText} onChange={(e) => setFilters({ ...filters, searchText: e.target.value })} placeholder="Buscar..." className="input-field pl-10" />
             </div>
           </div>
-          <button onClick={() => { setFilterCategory(''); setFilterCostCenter(''); setSearchText(''); }} className="btn-secondary">Limpar</button>
+          <button onClick={handleClearFilters} className="btn-secondary">Limpar</button>
         </div>
       </div>
 
@@ -338,12 +541,6 @@ export default function DespesasScreen() {
           <KPICard title="Parcelas no Mês" value={String(kpis.totalParcelas)} icon={Layers} iconColor="text-accent-600" iconBg="bg-accent-50" />
         </div>
       )}
-
-      {/* Action buttons */}
-      <div className="flex justify-end gap-3">
-        <button onClick={handleExport} className="btn-secondary"><Download className="h-4 w-4" />Exportar</button>
-        <button onClick={handleOpenNew} className="btn-primary"><Plus className="h-4 w-4" />Nova Despesa</button>
-      </div>
 
       {/* Table */}
       {loading ? <TableSkeleton rows={8} /> : error ? <ErrorState onRetry={loadData} /> : filteredExpenses.length === 0 ? (
@@ -382,6 +579,12 @@ export default function DespesasScreen() {
                         <button onClick={() => setViewTarget(e)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Visualizar">
                           <Eye className="h-4 w-4" />
                         </button>
+                        <button onClick={() => handleOpenHistory(e)} className="p-1.5 text-ink-500 hover:text-accent-600 hover:bg-accent-50 rounded-md transition-colors" title="Histórico">
+                          <History className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => handleOpenRecalc(e)} className="p-1.5 text-ink-500 hover:text-secondary-600 hover:bg-secondary-50 rounded-md transition-colors" title="Recalcular Parcelas">
+                          <RefreshCw className="h-4 w-4" />
+                        </button>
                         <button onClick={() => handleOpenEdit(e)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Editar">
                           <Pencil className="h-4 w-4" />
                         </button>
@@ -398,7 +601,7 @@ export default function DespesasScreen() {
         </div>
       )}
 
-      {/* Expense Modal - New DRE-oriented flow */}
+      {/* Expense Modal */}
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -412,7 +615,6 @@ export default function DespesasScreen() {
         }
       >
         <div className="space-y-4">
-          {/* Step 1: Competência */}
           <div className="flex items-center gap-2 text-sm font-semibold text-ink-700">
             <Calendar className="h-4 w-4 text-primary-600" />
             <span>Competência</span>
@@ -424,7 +626,6 @@ export default function DespesasScreen() {
                 value={form.competence_month}
                 onChange={(e) => setForm({ ...form, competence_month: Number(e.target.value) })}
                 className="input-field"
-                disabled={!!editingExpense}
               >
                 {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
               </select>
@@ -438,13 +639,11 @@ export default function DespesasScreen() {
                 value={form.competence_year}
                 onChange={(e) => setForm({ ...form, competence_year: Number(e.target.value) })}
                 className="input-field"
-                disabled={!!editingExpense}
               />
             </div>
           </div>
           {formErrors.competence && <p className="text-xs text-error-600">{formErrors.competence}</p>}
 
-          {/* Step 2: Centro de Custo */}
           <div className="flex items-center gap-2 text-sm font-semibold text-ink-700">
             <Building2 className="h-4 w-4 text-primary-600" />
             <span>Centro de Custo</span>
@@ -462,7 +661,6 @@ export default function DespesasScreen() {
             {formErrors.cost_center_id && <p className="mt-1 text-xs text-error-600">{formErrors.cost_center_id}</p>}
           </div>
 
-          {/* Step 3: Categoria (only after cost center selected) */}
           {form.cost_center_id && (
             <>
               <div className="flex items-center gap-2 text-sm font-semibold text-ink-700">
@@ -484,7 +682,6 @@ export default function DespesasScreen() {
             </>
           )}
 
-          {/* Step 4: Subcategoria (only if exists) */}
           {form.category_id && filteredSubcategories.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-ink-700 mb-1.5">Subcategoria *</label>
@@ -500,7 +697,6 @@ export default function DespesasScreen() {
             </div>
           )}
 
-          {/* Step 5: Fornecedor (optional, autocomplete) */}
           <div>
             <label className="block text-sm font-medium text-ink-700 mb-1.5">Fornecedor (opcional)</label>
             <div className="relative">
@@ -530,13 +726,9 @@ export default function DespesasScreen() {
                   ))}
                 </div>
               )}
-              {form.supplier_name && !form.supplier_id && supplierSearch && !suppliers.some(s => s.name.toLowerCase() === supplierSearch.toLowerCase()) && (
-                <p className="mt-1 text-xs text-accent-600">Novo fornecedor será cadastrado automaticamente.</p>
-              )}
             </div>
           </div>
 
-          {/* Step 6: Data do Pagamento */}
           <div>
             <label className="block text-sm font-medium text-ink-700 mb-1.5">Data do Pagamento *</label>
             <input
@@ -548,7 +740,6 @@ export default function DespesasScreen() {
             {formErrors.payment_date && <p className="mt-1 text-xs text-error-600">{formErrors.payment_date}</p>}
           </div>
 
-          {/* Step 7: Valor + Parcelas */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-ink-700 mb-1.5">Valor Total (R$) *</label>
@@ -575,10 +766,12 @@ export default function DespesasScreen() {
                 disabled={!!editingExpense}
               />
               {formErrors.installment_count && <p className="mt-1 text-xs text-error-600">{formErrors.installment_count}</p>}
+              {editingExpense && (
+                <p className="mt-1 text-xs text-ink-400">Use o botão "Recalcular Parcelas" para alterar.</p>
+              )}
             </div>
           </div>
 
-          {/* Preview of installments */}
           {form.total_amount && Number(form.total_amount) > 0 && form.installment_count > 1 && form.payment_date && (
             <div className="rounded-lg bg-primary-50 p-3">
               <p className="text-xs font-medium text-primary-700 mb-2">
@@ -596,7 +789,6 @@ export default function DespesasScreen() {
             </div>
           )}
 
-          {/* Step 8: Observações */}
           <div>
             <label className="block text-sm font-medium text-ink-700 mb-1.5">Observações</label>
             <textarea
@@ -611,7 +803,74 @@ export default function DespesasScreen() {
         </div>
       </Modal>
 
-      {/* View Modal with installments */}
+      {/* Recalculate Modal */}
+      <Modal
+        open={!!recalcTarget}
+        onClose={() => setRecalcTarget(null)}
+        title="Recalcular Parcelas"
+        size="md"
+        footer={
+          <>
+            <button onClick={() => setRecalcTarget(null)} className="btn-secondary">Cancelar</button>
+            <button onClick={handleRecalcSave} disabled={recalcSaving} className="btn-primary">
+              {recalcSaving ? 'Recalculando...' : 'Recalcular'}
+            </button>
+          </>
+        }
+      >
+        {recalcTarget && (
+          <div className="space-y-4">
+            <div className="rounded-lg bg-accent-50 border border-accent-200 p-3">
+              <p className="text-xs text-accent-800">
+                Todas as parcelas existentes serão removidas e novas parcelas serão geradas com base nos novos valores.
+                O vínculo entre parcelas será preservado.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">Novo Valor Total (R$) *</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={recalcForm.total_amount}
+                  onChange={(e) => setRecalcForm({ ...recalcForm, total_amount: e.target.value })}
+                  className="input-field"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">Novo Nº de Parcelas *</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={recalcForm.installment_count}
+                  onChange={(e) => setRecalcForm({ ...recalcForm, installment_count: Number(e.target.value) })}
+                  className="input-field"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Data do Pagamento *</label>
+              <input
+                type="date"
+                value={recalcForm.payment_date}
+                onChange={(e) => setRecalcForm({ ...recalcForm, payment_date: e.target.value })}
+                className="input-field"
+              />
+            </div>
+            {recalcForm.total_amount && Number(recalcForm.total_amount) > 0 && recalcForm.installment_count > 0 && (
+              <div className="rounded-lg bg-primary-50 p-3">
+                <p className="text-xs font-medium text-primary-700">
+                  Novo valor por parcela: {formatCurrency(Number(recalcForm.total_amount) / recalcForm.installment_count)}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* View Modal */}
       <Modal open={!!viewTarget} onClose={() => setViewTarget(null)} title="Detalhes da Despesa" size="lg">
         {viewTarget && (
           <div className="space-y-4">
@@ -649,7 +908,9 @@ export default function DespesasScreen() {
                         </td>
                         <td className="px-3 py-2 text-sm text-right font-medium">{formatCurrency(Number(inst.amount))}</td>
                         <td className="px-3 py-2 text-center">
-                          <Badge variant="success">Pago</Badge>
+                          <Badge variant={inst.paid ? 'success' : 'warning'}>
+                            {inst.paid ? 'Pago' : 'Pendente'}
+                          </Badge>
                         </td>
                       </tr>
                     ))}
@@ -657,6 +918,36 @@ export default function DespesasScreen() {
                 </table>
               </div>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* History Modal */}
+      <Modal open={!!historyTarget} onClose={() => setHistoryTarget(null)} title="Histórico de Alterações" size="lg">
+        {historyLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-200 border-t-primary-600" />
+          </div>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-ink-500 text-center py-8">Nenhuma alteração registrada.</p>
+        ) : (
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+            {history.map((h) => (
+              <div key={h.id} className="flex items-start gap-3 rounded-lg border border-ink-200 p-3">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-ink-900">{fieldLabels[h.field_name] ?? h.field_name}</span>
+                    <span className="text-xs text-ink-400">{new Date(h.changed_at).toLocaleString('pt-BR')}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs">
+                    <span className="text-error-600 line-through">{h.old_value ?? '—'}</span>
+                    <span className="text-ink-400">→</span>
+                    <span className="text-success-600 font-medium">{h.new_value ?? '—'}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-ink-400">por {h.user?.name ?? 'Sistema'}</p>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </Modal>

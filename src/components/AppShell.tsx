@@ -10,7 +10,7 @@ interface AppShellProps {
 }
 
 export default function AppShell({ currentScreen, onNavigate, children }: AppShellProps) {
-  const { user, logout } = useAuth();
+  const { user, signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const activeItem = NAV_ITEMS.find((item) => item.id === currentScreen);
@@ -81,7 +81,7 @@ export default function AppShell({ currentScreen, onNavigate, children }: AppShe
               <p className="text-xs text-ink-400 capitalize">{user?.role}</p>
             </div>
             <button
-              onClick={logout}
+              onClick={signOut}
               className="text-ink-400 hover:text-error-400 transition-colors"
               title="Sair"
             >

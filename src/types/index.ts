@@ -1,11 +1,28 @@
 export interface User {
   id: string;
+  auth_id: string | null;
   name: string;
   email: string;
   role: 'admin' | 'financeiro' | 'operador';
   active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface RevenueMainCategory {
+  id: string;
+  name: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface RevenueSubcategory {
+  id: string;
+  main_category_id: string;
+  name: string;
+  active: boolean;
+  created_at: string;
+  main_category?: RevenueMainCategory;
 }
 
 export interface RevenueCategory {
@@ -18,7 +35,11 @@ export interface RevenueCategory {
 export interface Revenue {
   id: string;
   revenue_date: string;
+  competence_month: number | null;
+  competence_year: number | null;
   category_id: string;
+  main_category_id: string | null;
+  subcategory_id: string | null;
   quantity: number;
   amount: number;
   notes: string | null;
@@ -26,6 +47,8 @@ export interface Revenue {
   created_at: string;
   updated_at: string;
   category?: RevenueCategory;
+  main_category?: RevenueMainCategory | null;
+  subcategory?: RevenueSubcategory | null;
   user?: User | null;
 }
 
@@ -244,4 +267,16 @@ export interface BudgetExecution {
   difference: number;
   differencePercent: number;
   executionPercent: number;
+}
+
+export interface ChangeHistory {
+  id: string;
+  table_name: string;
+  record_id: string;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by: string | null;
+  changed_at: string;
+  user?: User | null;
 }

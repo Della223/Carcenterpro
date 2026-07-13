@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { ToastContainer, useToast } from './components/ui/Toast';
+import { ToastProvider } from './components/ui/Toast';
 import LoginScreen from './screens/LoginScreen';
+import BootstrapAdminScreen from './screens/BootstrapAdminScreen';
 import AppShell from './components/AppShell';
 import HomeScreen from './screens/HomeScreen';
 import ComercialScreen from './screens/ComercialScreen';
@@ -10,16 +11,16 @@ import DashboardScreen from './screens/DashboardScreen';
 import DREScreen from './screens/DREScreen';
 import OrcamentosScreen from './screens/OrcamentosScreen';
 import RelatoriosScreen from './screens/RelatoriosScreen';
+import GestaoUsuariosScreen from './screens/GestaoUsuariosScreen';
 import ConfiguracoesScreen from './screens/ConfiguracoesScreen';
 import PlaceholderScreen from './screens/PlaceholderScreen';
 import { NAV_ITEMS, type ScreenId } from './config/navigation';
 
 function AppContent() {
-  const { user, loading } = useAuth();
-  const toast = useToast();
+  const { user, loading, needsBootstrap, bootstrapLoading } = useAuth();
   const [screen, setScreen] = useState<ScreenId>('home');
 
-  if (loading) {
+  if (bootstrapLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-ink-50">
         <div className="flex flex-col items-center gap-3">
@@ -30,6 +31,7 @@ function AppContent() {
     );
   }
 
+  if (needsBootstrap) return <BootstrapAdminScreen />;
   if (!user) return <LoginScreen />;
 
   const activeItem = NAV_ITEMS.find((item) => item.id === screen)!;
@@ -43,6 +45,7 @@ function AppContent() {
       case 'dre': return <DREScreen />;
       case 'orcamentos': return <OrcamentosScreen />;
       case 'relatorios': return <RelatoriosScreen />;
+      case 'usuarios': return <GestaoUsuariosScreen />;
       case 'configuracoes': return <ConfiguracoesScreen />;
       case 'ajuda': return <PlaceholderScreen item={activeItem} />;
       default: return <HomeScreen />;
@@ -50,19 +53,18 @@ function AppContent() {
   };
 
   return (
-    <>
-      <AppShell currentScreen={screen} onNavigate={setScreen}>
-        {renderScreen()}
-      </AppShell>
-      <ToastContainer toasts={toast.toasts} onClose={toast.removeToast} />
-    </>
+    <AppShell currentScreen={screen} onNavigate={setScreen}>
+      {renderScreen()}
+    </AppShell>
   );
 }
 
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </AuthProvider>
   );
 }

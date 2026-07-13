@@ -186,14 +186,67 @@ export async function createExpense(input: ExpenseInput): Promise<Expense> {
 }
 
 export async function updateExpense(id: string, input: Partial<ExpenseInput>): Promise<Expense> {
+  const { payment_date, ...updateData } = input;
+  const updatePayload: Record<string, unknown> = { ...updateData, updated_at: new Date().toISOString() };
+  if (payment_date) updatePayload.payment_date = payment_date;
+
   const { data, error } = await supabase
     .from('expenses')
-    .update({ ...input, updated_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq('id', id)
     .select('*, category:expense_categories(*), subcategory:expense_subcategories(*), cost_center:cost_centers(*), supplier_ref:suppliers(*), user:users(*), installments:expense_installments(*)')
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function recalculateInstallments(
+  expenseId: string,
+  newTotalAmount: number,
+  newInstallmentCount: number,
+  paymentDate: string,
+  baseMonth: number,
+  baseYear: number
+): Promise<Expense> {
+  // Delete existing installments
+  const { error: delError } = await supabase
+    .from('expense_installments')
+    .delete()
+    .eq('expense_id', expenseId);
+  if (delError) throw delError;
+
+  // Update expense record
+  const { error: expError } = await supabase
+    .from('expenses')
+    .update({
+      total_amount: newTotalAmount,
+      installment_count: newInstallmentCount,
+      payment_date: paymentDate,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', expenseId);
+  if (expError) throw expError;
+
+  // Generate and insert new installments
+  const installments = generateInstallments(newTotalAmount, newInstallmentCount, paymentDate, baseMonth, baseYear);
+  const installmentRecords = installments.map((inst) => ({
+    expense_id: expenseId,
+    ...inst,
+  }));
+
+  const { error: instError } = await supabase
+    .from('expense_installments')
+    .insert(installmentRecords);
+  if (instError) throw instError;
+
+  // Fetch updated expense
+  const { data: fullExpense, error: fetchError } = await supabase
+    .from('expenses')
+    .select('*, category:expense_categories(*), subcategory:expense_subcategories(*), cost_center:cost_centers(*), supplier_ref:suppliers(*), user:users(*), installments:expense_installments(*)')
+    .eq('id', expenseId)
+    .single();
+  if (fetchError) throw fetchError;
+  return fullExpense;
 }
 
 export async function deleteExpense(id: string): Promise<void> {
