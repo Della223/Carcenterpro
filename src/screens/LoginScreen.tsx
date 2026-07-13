@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Car, ShieldCheck, TrendingUp, Lock, Mail, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, TrendingUp, Lock, Mail, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 type Mode = 'login' | 'recovery';
@@ -44,12 +44,12 @@ export default function LoginScreen() {
         />
         <div className="relative z-10 flex flex-col justify-between p-12 text-white">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 backdrop-blur ring-1 ring-white/20">
-              <Car className="h-7 w-7" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white p-1.5 ring-1 ring-white/20">
+              <img src="/logo-symbol.png" alt="CarCenter" className="h-full w-full object-contain" />
             </div>
             <div>
-              <p className="text-lg font-bold tracking-tight">CarCenter PRO</p>
-              <p className="text-xs text-primary-200 font-medium">Finance 3.0</p>
+              <p className="text-lg font-bold tracking-tight">CarCenter PRO Finance</p>
+              <p className="text-xs text-primary-200 font-medium">Centro de Inteligência Empresarial</p>
             </div>
           </div>
           <div className="space-y-6">
@@ -57,143 +57,4 @@ export default function LoginScreen() {
               Gestão financeira<br />de ponta a ponta<br />para o seu centro automotivo.
             </h1>
             <p className="text-primary-200 text-lg max-w-md">
-              Controle completo de receitas, despesas, comissões, veículos e muito mais — em uma única plataforma.
-            </p>
-            <div className="flex gap-6 pt-4">
-              <div className="flex items-center gap-2 text-primary-100">
-                <TrendingUp className="h-5 w-5" />
-                <span className="text-sm font-medium">Relatórios em tempo real</span>
-              </div>
-              <div className="flex items-center gap-2 text-primary-100">
-                <ShieldCheck className="h-5 w-5" />
-                <span className="text-sm font-medium">Dados seguros</span>
-              </div>
-            </div>
-          </div>
-          <p className="text-xs text-primary-300">© 2025 CarCenter PRO. Todos os direitos reservados.</p>
-        </div>
-      </div>
-
-      {/* Login form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-12">
-        <div className="w-full max-w-md animate-fade-in">
-          <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-600 text-white">
-              <Car className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-base font-bold text-ink-900">CarCenter PRO</p>
-              <p className="text-xs text-ink-500 font-medium">Finance 3.0</p>
-            </div>
-          </div>
-
-          {mode === 'recovery' && (
-            <button
-              onClick={() => { setMode('login'); setRecoverySent(false); setError(null); }}
-              className="flex items-center gap-1.5 text-sm text-ink-500 hover:text-ink-700 mb-4 transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Voltar para o login
-            </button>
-          )}
-
-          <h2 className="text-2xl font-bold text-ink-900 tracking-tight">
-            {mode === 'login' ? 'Acessar o sistema' : 'Recuperar senha'}
-          </h2>
-          <p className="mt-1 text-sm text-ink-500">
-            {mode === 'login'
-              ? 'Entre com suas credenciais para continuar.'
-              : 'Informe seu e-mail para receber as instruções de recuperação.'}
-          </p>
-
-          {recoverySent ? (
-            <div className="mt-8 rounded-xl border border-success-200 bg-success-50 p-4">
-              <p className="text-sm text-success-800 font-medium">
-                Se uma conta existir com este e-mail, você receberá as instruções de recuperação.
-              </p>
-              <button
-                onClick={() => { setMode('login'); setRecoverySent(false); setEmail(''); }}
-                className="mt-3 text-sm font-medium text-success-700 hover:text-success-800"
-              >
-                Voltar para o login
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-ink-700 mb-1.5">E-mail</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="input-field pl-10"
-                    placeholder="seu@email.com"
-                    autoComplete="email"
-                  />
-                </div>
-              </div>
-
-              {mode === 'login' && (
-                <div>
-                  <label className="block text-sm font-medium text-ink-700 mb-1.5">Senha</label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="input-field pl-10 pr-10"
-                      placeholder="••••••••"
-                      autoComplete="current-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-600"
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {error && (
-                <div className="rounded-lg bg-error-50 border border-error-200 p-3">
-                  <p className="text-sm text-error-700">{error}</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn-primary w-full justify-center"
-              >
-                {loading
-                  ? 'Aguarde...'
-                  : mode === 'login'
-                    ? 'Entrar'
-                    : 'Enviar instruções'}
-              </button>
-
-              {mode === 'login' && (
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => { setMode('recovery'); setError(null); }}
-                    className="text-sm text-ink-500 hover:text-primary-600 transition-colors"
-                  >
-                    Esqueceu sua senha?
-                  </button>
-                </div>
-              )}
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+              Controle completo de receitas, despesas, comissões, veículos e muito
