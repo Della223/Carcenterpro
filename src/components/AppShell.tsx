@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, Menu, X, ChevronRight } from 'lucide-react';
+import { Car, LogOut, Menu, X, ChevronRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { NAV_ITEMS, type ScreenId } from '../config/navigation';
 
@@ -31,8 +31,8 @@ export default function AppShell({ currentScreen, onNavigate, children }: AppShe
         {/* Logo header */}
         <div className="flex h-16 items-center justify-between px-5 border-b border-ink-800">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white p-1">
-              <img src="/logo-symbol.png" alt="CarCenter" className="h-full w-full object-contain" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-600 text-white">
+              <Car className="h-5 w-5" />
             </div>
             <div>
               <p className="text-sm font-bold text-white tracking-tight">CarCenter PRO</p>

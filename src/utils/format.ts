@@ -16,17 +16,13 @@ export function formatPercent(value: number): string {
   }).format(value || 0) + '%';
 }
 
-export function formatDate(date: string | Date | null | undefined): string {
-  if (!date) return '-';
+export function formatDate(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date + 'T00:00:00') : date;
-  if (Number.isNaN(d.getTime())) return '-';
   return d.toLocaleDateString('pt-BR');
 }
 
-export function formatDateTime(date: string | Date | null | undefined): string {
-  if (!date) return '-';
+export function formatDateTime(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
-  if (Number.isNaN(d.getTime())) return '-';
   return d.toLocaleString('pt-BR', {
     day: '2-digit',
     month: '2-digit',
