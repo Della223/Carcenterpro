@@ -10,7 +10,7 @@ import { KPISkeleton, TableSkeleton } from '../components/ui/Skeleton';
 import KPICard from '../components/ui/KPICard';
 import {
   fetchRevenues, createRevenue, updateRevenue, deleteRevenue,
-  fetchRevenueMainCategories, fetchRevenueSubcategories,
+  fetchRevenueMainCategories, fetchRevenueSubcategories, createRevenueSubcategory, 
   type RevenueInput,
 } from '../services/revenue.service';
 import { createAuditLog } from '../services/audit.service';
@@ -88,6 +88,9 @@ export default function ComercialScreen() {
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [showNewSubcategory, setShowNewSubcategory] = useState(false);
+  const [newSubcategoryName, setNewSubcategoryName] = useState('');
+  const [creatingSubcategory, setCreatingSubcategory] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<Revenue | null>(null);
   const [viewTarget, setViewTarget] = useState<Revenue | null>(null);
@@ -183,7 +186,9 @@ export default function ComercialScreen() {
       amount: '',
       notes: '',
     });
-    setFormErrors({});
+   setFormErrors({});
+    setShowNewSubcategory(false);
+    setNewSubcategoryName('');
     setModalOpen(true);
   };
 
@@ -200,7 +205,27 @@ export default function ComercialScreen() {
       notes: revenue.notes ?? '',
     });
     setFormErrors({});
+    setShowNewSubcategory(false);
+    setNewSubcategoryName('');
     setModalOpen(true);
+  };
+  const handleCreateSubcategory = async () => {
+    if (!form.main_category_id) return;
+    const name = newSubcategoryName.trim();
+    if (!name) return;
+    setCreatingSubcategory(true);
+    try {
+      const created = await createRevenueSubcategory(form.main_category_id, name);
+      setSubcategories((prev) => [...prev, created]);
+      setForm((prev) => ({ ...prev, subcategory_id: created.id }));
+      setShowNewSubcategory(false);
+      setNewSubcategoryName('');
+      toast.success('Subcategoria criada com sucesso.');
+    } catch {
+      toast.error('Não foi possível criar a subcategoria.');
+    } finally {
+      setCreatingSubcategory(false);
+    }
   };
 
   const validateForm = () => {
@@ -209,7 +234,7 @@ export default function ComercialScreen() {
     if (!form.revenue_date) errors.revenue_date = 'Data é obrigatória.';
     else if (form.revenue_date > new Date().toISOString().split('T')[0]) errors.revenue_date = 'Data não pode ser futura.';
     if (!form.main_category_id) errors.main_category_id = 'Categoria principal é obrigatória.';
-    if (formSubcategories.length > 0 && !form.subcategory_id) errors.subcategory_id = 'Subcategoria é obrigatória.';
+    if (form.main_category_id && !form.subcategory_id) errors.subcategory_id = 'Subcategoria é obrigatória.';
     if (form.quantity < 0) errors.quantity = 'Quantidade deve ser maior ou igual a zero.';
     if (!form.amount || Number(form.amount) <= 0) errors.amount = 'Valor deve ser maior que zero.';
     setFormErrors(errors);
@@ -556,18 +581,61 @@ export default function ComercialScreen() {
           </div>
 
           {/* Subcategoria */}
-          {form.main_category_id && formSubcategories.length > 0 && (
+          {form.main_category_id && (
             <div>
-              <label className="block text-sm font-medium text-ink-700 mb-1.5">Subcategoria *</label>
-              <select
-                value={form.subcategory_id}
-                onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })}
-                className="input-field"
-              >
-                <option value="">Selecione...</option>
-                {formSubcategories.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              {formErrors.subcategory_id && <p className="mt-1 text-xs text-error-600">{formErrors.subcategory_id}</p>}
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-sm font-medium text-ink-700">Subcategoria *</label>
+                {!showNewSubcategory && (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewSubcategory(true)}
+                    className="text-xs font-medium text-accent-600 hover:text-accent-700"
+                  >
+                    + Nova subcategoria
+                  </button>
+                )}
+              </div>
+
+              {!showNewSubcategory ? (
+                <>
+                  <select
+                    value={form.subcategory_id}
+                    onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })}
+                    className="input-field"
+                  >
+                    <option value="">Selecione...</option>
+                    {formSubcategories.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  {formErrors.subcategory_id && <p className="mt-1 text-xs text-error-600">{formErrors.subcategory_id}</p>}
+                </>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={newSubcategoryName}
+                    onChange={(e) => setNewSubcategoryName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateSubcategory(); } }}
+                    placeholder="Nome da nova subcategoria"
+                    className="input-field flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCreateSubcategory}
+                    disabled={creatingSubcategory || !newSubcategoryName.trim()}
+                    className="btn-primary whitespace-nowrap"
+                  >
+                    Criar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowNewSubcategory(false); setNewSubcategoryName(''); }}
+                    className="btn-secondary"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
