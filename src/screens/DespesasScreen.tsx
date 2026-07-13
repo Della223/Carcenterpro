@@ -17,7 +17,7 @@ import {
 } from '../services/expense.service';
 import { createAuditLog } from '../services/audit.service';
 import { logChanges, fetchChangeHistory } from '../services/change-history.service';
-import { formatCurrency, formatDate, getCurrentCompetence, getCompetenceString, downloadCSV } from '../utils/format';
+import { formatCurrency, formatDate, formatDateTime, getCurrentCompetence, getCompetenceString, downloadCSV } from '../utils/format';
 import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, ChangeHistory } from '../types';
 
 const MONTH_NAMES = [
@@ -937,7 +937,7 @@ export default function DespesasScreen() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-ink-900">{fieldLabels[h.field_name] ?? h.field_name}</span>
-                    <span className="text-xs text-ink-400">{new Date(h.changed_at).toLocaleString('pt-BR')}</span>
+                   <span className="text-xs text-ink-400">{formatDateTime(h.changed_at)}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs">
                     <span className="text-error-600 line-through">{h.old_value ?? '—'}</span>
