@@ -15,7 +15,7 @@ import {
 } from '../services/revenue.service';
 import { createAuditLog } from '../services/audit.service';
 import { logChanges, fetchChangeHistory } from '../services/change-history.service';
-import { formatCurrency, formatDate, formatNumber, downloadCSV, getCurrentCompetence } from '../utils/format';
+import { formatCurrency, formatDate, formatDateTime, formatNumber, downloadCSV, getCurrentCompetence } from '../utils/format';
 import type { Revenue, RevenueMainCategory, RevenueSubcategory, ChangeHistory } from '../types';
 
 const MONTH_NAMES = [
@@ -625,7 +625,7 @@ export default function ComercialScreen() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-ink-900">{fieldLabels[h.field_name] ?? h.field_name}</span>
-                    <span className="text-xs text-ink-400">{new Date(h.changed_at).toLocaleString('pt-BR')}</span>
+                    <span className="text-xs text-ink-400">{formatDateTime(h.changed_at)}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs">
                     <span className="text-error-600 line-through">{h.old_value ?? '—'}</span>
