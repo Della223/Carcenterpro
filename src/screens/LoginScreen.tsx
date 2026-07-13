@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Car, ShieldCheck, TrendingUp, Lock, Mail, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, TrendingUp, Lock, Mail, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 type Mode = 'login' | 'recovery';
