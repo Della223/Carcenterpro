@@ -67,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select('id')
         .eq('role', 'admin')
         .eq('active', true)
+        .not('auth_id', 'is', null)
         .limit(1);
 
       if (error) {

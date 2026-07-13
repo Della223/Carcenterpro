@@ -16,6 +16,7 @@ export async function hasAdminUser(): Promise<boolean> {
     .select('id')
     .eq('role', 'admin')
     .eq('active', true)
+    .not('auth_id', 'is', null)
     .limit(1);
   if (error) throw error;
   return (data ?? []).length > 0;
