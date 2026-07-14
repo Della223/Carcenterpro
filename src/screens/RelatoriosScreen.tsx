@@ -68,12 +68,12 @@ export default function RelatoriosScreen() {
       let rows: (string | number)[][] = [];
       let title = '';
 
-      if (reportId === 'receitas') {
+     if (reportId === 'receitas') {
         const data = await fetchRevenues({});
         title = `Relatório de Receitas — ${getCompetenceString(filterMonth, filterYear)}`;
-        headers = ['Data', 'Categoria', 'Quantidade', 'Valor', 'Ticket Médio', 'Observações', 'Usuário'];
+        headers = ['Data', 'Categoria Principal', 'Subcategoria', 'Quantidade', 'Valor', 'Ticket Médio', 'Observações', 'Usuário'];
         rows = data.map((r: Revenue) => [
-          formatDate(r.revenue_date), r.category?.name ?? '-', r.quantity,
+          formatDate(r.revenue_date), r.main_category?.name ?? '-', r.subcategory?.name ?? '-', r.quantity,
           formatCurrency(Number(r.amount)),
           r.quantity > 0 ? formatCurrency(Number(r.amount) / r.quantity) : '-',
           r.notes ?? '-', r.user?.name ?? '-',
@@ -128,7 +128,7 @@ export default function RelatoriosScreen() {
         const [revs, exps] = await Promise.all([fetchRevenues({}), fetchExpenses({})]);
         title = `Fluxo Financeiro — ${getCompetenceString(filterMonth, filterYear)}`;
         headers = ['Data', 'Tipo', 'Descrição', 'Valor'];
-        const revRows = revs.map((r: Revenue) => [formatDate(r.revenue_date), 'Receita', r.category?.name ?? '-', formatCurrency(Number(r.amount))]);
+        const revRows = revs.map((r: Revenue) => [formatDate(r.revenue_date), 'Receita', r.main_category?.name ?? '-', formatCurrency(Number(r.amount))]);
         const expRows = exps.flatMap((e: Expense) =>
           (e.installments ?? []).map((i) => [
             formatDate(i.payment_date ?? i.due_date), 'Despesa', `${e.supplier ?? '-'} (${i.installment_number}/${e.installment_count})`,
@@ -155,7 +155,7 @@ export default function RelatoriosScreen() {
         headers = ['Categoria', 'Total', 'Quantidade'];
         const grouped: Record<string, { total: number; qty: number }> = {};
         for (const r of revs) {
-          const cat = r.category?.name ?? '-';
+          const cat = r.main_category?.name ?? '-';
           if (!grouped[cat]) grouped[cat] = { total: 0, qty: 0 };
           grouped[cat].total += Number(r.amount);
           grouped[cat].qty += r.quantity;
