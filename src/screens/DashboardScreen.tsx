@@ -10,7 +10,7 @@ import ErrorState from '../components/ui/ErrorState';
 import { KPISkeleton, Skeleton } from '../components/ui/Skeleton';
 import KPICard from '../components/ui/KPICard';
 import {
-  fetchDashboardKPIs, fetchRevenueByCategory, fetchExpenseByCategory,
+  fetchDashboardKPIs, fetchRevenueByCategory, fetchRevenueBySubcategory, fetchExpenseByCategory,
   fetchMonthlyEvolution, fetchCostCenterDistribution,
 } from '../services/dashboard.service';
 import { formatCurrency, formatPercent, getCurrentCompetence, downloadCSV } from '../utils/format';
@@ -26,6 +26,7 @@ export default function DashboardScreen() {
   const [error, setError] = useState(false);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [revenueByCat, setRevenueByCat] = useState<{ name: string; value: number }[]>([]);
+  const [revenueBySub, setRevenueBySub] = useState<{ name: string; value: number }[]>([]);
   const [expenseByCat, setExpenseByCat] = useState<{ name: string; value: number }[]>([]);
   const [monthlyData, setMonthlyData] = useState<{ month: string; receita: number; despesa: number }[]>([]);
   const [costCenterData, setCostCenterData] = useState<{ name: string; value: number }[]>([]);
@@ -37,15 +38,17 @@ export default function DashboardScreen() {
     setLoading(true);
     setError(false);
     try {
-      const [k, rev, exp, monthly, cc] = await Promise.all([
+     const [k, rev, revSub, exp, monthly, cc] = await Promise.all([
         fetchDashboardKPIs(filterMonth, filterYear),
         fetchRevenueByCategory(filterMonth, filterYear),
+        fetchRevenueBySubcategory(filterMonth, filterYear),
         fetchExpenseByCategory(filterMonth, filterYear),
         fetchMonthlyEvolution(filterYear),
         fetchCostCenterDistribution(filterMonth, filterYear),
       ]);
       setKpis(k);
       setRevenueByCat(rev);
+      setRevenueBySub(revSub);
       setExpenseByCat(exp);
       setMonthlyData(monthly);
       setCostCenterData(cc);
@@ -158,14 +161,31 @@ export default function DashboardScreen() {
               {revenueByCat.length === 0 ? (
                 <EmptyState title="Sem dados de receita para o período." />
               ) : (
-                <ResponsiveContainer width="100%" height={280}>
-                  <PieChart>
-                    <Pie data={revenueByCat} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={(entry) => `${entry.name}: ${formatCurrency(entry.value as number)}`} labelLine={false} fontSize={11}>
-                      {revenueByCat.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={(v: any) => formatCurrency(Number(v))} contentStyle={{ borderRadius: '8px', fontSize: '13px' }} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie data={revenueByCat} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={90} label={(entry) => `${entry.name}`}>
+                        {revenueByCat.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(v: any) => formatCurrency(Number(v))} contentStyle={{ borderRadius: '8px', fontSize: '13px' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="mt-3 space-y-2">
+                    {revenueByCat.map((c, i) => {
+                      const total = revenueByCat.reduce((s, x) => s + x.value, 0);
+                      const pct = total > 0 ? (c.value / total) * 100 : 0;
+                      return (
+                        <div key={i} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2">
+                            <div className="h-3 w-3 rounded-full" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
+                            <span className="text-ink-700">{c.name}</span>
+                          </div>
+                          <span className="font-medium text-ink-900">{formatCurrency(c.value)} ({formatPercent(pct)})</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
 
@@ -174,16 +194,67 @@ export default function DashboardScreen() {
               {expenseByCat.length === 0 ? (
                 <EmptyState title="Sem dados de despesa para o período." />
               ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie data={expenseByCat} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={90} label={(entry) => `${entry.name}`}>
+                        {expenseByCat.map((_, i) => <Cell key={i} fill={CHART_COLORS[(i + 4) % CHART_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(v: any) => formatCurrency(Number(v))} contentStyle={{ borderRadius: '8px', fontSize: '13px' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="mt-3 space-y-2">
+                    {expenseByCat.map((c, i) => {
+                      const total = expenseByCat.reduce((s, x) => s + x.value, 0);
+                      const pct = total > 0 ? (c.value / total) * 100 : 0;
+                      return (
+                        <div key={i} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2">
+                            <div className="h-3 w-3 rounded-full" style={{ backgroundColor: CHART_COLORS[(i + 4) % CHART_COLORS.length] }} />
+                            <span className="text-ink-700">{c.name}</span>
+                          </div>
+                          <span className="font-medium text-ink-900">{formatCurrency(c.value)} ({formatPercent(pct)})</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Revenue by Subcategory */}
+          <div className="card p-5">
+            <h3 className="text-base font-semibold text-ink-900 mb-4">Receita por Subcategoria</h3>
+            {revenueBySub.length === 0 ? (
+              <EmptyState title="Sem dados de receita para o período." />
+            ) : (
+              <>
                 <ResponsiveContainer width="100%" height={280}>
                   <PieChart>
-                    <Pie data={expenseByCat} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={(entry) => `${entry.name}: ${formatCurrency(entry.value as number)}`} labelLine={false} fontSize={11}>
-                      {expenseByCat.map((_, i) => <Cell key={i} fill={CHART_COLORS[(i + 4) % CHART_COLORS.length]} />)}
+                    <Pie data={revenueBySub} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={100} label={(entry) => `${entry.name}`}>
+                      {revenueBySub.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                     </Pie>
                     <Tooltip formatter={(v: any) => formatCurrency(Number(v))} contentStyle={{ borderRadius: '8px', fontSize: '13px' }} />
                   </PieChart>
                 </ResponsiveContainer>
-              )}
-            </div>
+                <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+                  {revenueBySub.map((s, i) => {
+                    const total = revenueBySub.reduce((sum, x) => sum + x.value, 0);
+                    const pct = total > 0 ? (s.value / total) * 100 : 0;
+                    return (
+                      <div key={i} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
+                          <span className="text-ink-700">{s.name}</span>
+                        </div>
+                        <span className="font-medium text-ink-900 whitespace-nowrap">{formatCurrency(s.value)} ({formatPercent(pct)})</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Cost Center Distribution + Monthly Line Chart */}
