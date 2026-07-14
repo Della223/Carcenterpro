@@ -149,7 +149,25 @@ export async function fetchRevenueByCategory(
   }
   return Object.entries(grouped).map(([name, value]) => ({ name, value }));
 }
+export async function fetchRevenueBySubcategory(
+  competenceMonth: number,
+  competenceYear: number
+): Promise<{ name: string; value: number }[]> {
+  const { startDate, endDate } = getDateRange(competenceMonth, competenceYear);
+  const { data, error } = await supabase
+    .from('revenues')
+    .select('amount, subcategory:revenue_subcategories(name)')
+    .gte('revenue_date', startDate)
+    .lte('revenue_date', endDate);
+  if (error) throw error;
 
+  const grouped: Record<string, number> = {};
+  for (const r of data ?? []) {
+    const subName = (r.subcategory as unknown as { name: string })?.name ?? 'Sem subcategoria';
+    grouped[subName] = (grouped[subName] || 0) + Number(r.amount);
+  }
+  return Object.entries(grouped).map(([name, value]) => ({ name, value }));
+}
 export async function fetchExpenseByCategory(
   competenceMonth: number,
   competenceYear: number
