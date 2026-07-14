@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText, ChevronRight, ChevronDown } from 'lucide-react';
 import { useToast } from '../components/ui/Toast';
 import EmptyState from '../components/ui/EmptyState';
 import ErrorState from '../components/ui/ErrorState';
@@ -7,6 +7,18 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { fetchDRE, fetchDREComparison } from '../services/dre.service';
 import { formatCurrency, formatPercent, getCurrentCompetence, getPreviousCompetence, getCompetenceString, downloadCSV } from '../utils/format';
 import type { DREData } from '../types';
+
+type DRERowType = 'header' | 'category' | 'subcategory' | 'subsubcategory' | 'subtotal' | 'total';
+
+interface DRERow {
+  key: string;
+  label: string;
+  value: number;
+  type: DRERowType;
+  indent: number;
+  expandable?: boolean;
+  expanded?: boolean;
+}
 
 export default function DREScreen() {
   const toast = useToast();
@@ -20,6 +32,7 @@ export default function DREScreen() {
   const [filterMonth, setFilterMonth] = useState(defaultMonth);
   const [filterYear, setFilterYear] = useState(defaultYear);
   const [showComparison, setShowComparison] = useState(false);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -44,28 +57,128 @@ export default function DREScreen() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  const toggleExpand = (key: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const dreRows = useMemo(() => {
     if (!currentDRE) return [];
-    const rows: { label: string; value: number; type: 'header' | 'category' | 'subtotal' | 'total'; indent?: number }[] = [
-      { label: 'Receita Bruta', value: currentDRE.receitaBruta, type: 'header' },
-      ...currentDRE.receitaPorCategoria.map((c) => ({ label: c.category, value: c.amount, type: 'category' as const, indent: 1 })),
-      { label: '(-) Deduções', value: -currentDRE.deducoes, type: 'subtotal' },
-      { label: '(=) Receita Líquida', value: currentDRE.receitaLiquida, type: 'total' },
-      { label: '(-) Despesas Operacionais', value: -currentDRE.despesasOperacionais, type: 'header' },
-      ...currentDRE.despesasPorCategoria.map((c) => ({ label: c.category, value: -c.amount, type: 'category' as const, indent: 1 })),
-      { label: '(=) Resultado Operacional', value: currentDRE.resultadoOperacional, type: 'total' },
-    ];
+    const rows: DRERow[] = [];
+
+    rows.push({ key: 'receita-bruta', label: 'Receita Bruta', value: currentDRE.receitaBruta, type: 'header', indent: 0 });
+
+    for (const cat of currentDRE.receitaPorCategoria) {
+      const catKey = `rev|${cat.category}`;
+      const hasChildren = cat.subcategories.length > 0;
+      rows.push({
+        key: catKey, label: cat.category, value: cat.amount, type: 'category', indent: 1,
+        expandable: hasChildren, expanded: expandedKeys.has(catKey),
+      });
+      if (hasChildren && expandedKeys.has(catKey)) {
+        for (const sub of cat.subcategories) {
+          rows.push({ key: `${catKey}|${sub.name}`, label: sub.name, value: sub.amount, type: 'subcategory', indent: 2 });
+        }
+      }
+    }
+
+    rows.push({ key: 'deducoes', label: '(-) Deduções', value: -currentDRE.deducoes, type: 'subtotal', indent: 0 });
+    rows.push({ key: 'receita-liquida', label: '(=) Receita Líquida', value: currentDRE.receitaLiquida, type: 'total', indent: 0 });
+    rows.push({ key: 'despesas-operacionais', label: '(-) Despesas Operacionais', value: -currentDRE.despesasOperacionais, type: 'header', indent: 0 });
+
+    for (const cc of currentDRE.despesasPorCategoria) {
+      const ccKey = `exp|${cc.category}`;
+      const hasCategories = cc.categories.length > 0;
+      rows.push({
+        key: ccKey, label: cc.category, value: -cc.amount, type: 'category', indent: 1,
+        expandable: hasCategories, expanded: expandedKeys.has(ccKey),
+      });
+      if (hasCategories && expandedKeys.has(ccKey)) {
+        for (const cat of cc.categories) {
+          const catKey = `${ccKey}|${cat.category}`;
+          const hasSubs = cat.subcategories.length > 0;
+          rows.push({
+            key: catKey, label: cat.category, value: -cat.amount, type: 'subcategory', indent: 2,
+            expandable: hasSubs, expanded: expandedKeys.has(catKey),
+          });
+          if (hasSubs && expandedKeys.has(catKey)) {
+            for (const sub of cat.subcategories) {
+              rows.push({ key: `${catKey}|${sub.name}`, label: sub.name, value: -sub.amount, type: 'subsubcategory', indent: 3 });
+            }
+          }
+        }
+      }
+    }
+
+    rows.push({ key: 'resultado-operacional', label: '(=) Resultado Operacional', value: currentDRE.resultadoOperacional, type: 'total', indent: 0 });
+
     return rows;
-  }, [currentDRE]);
+  }, [currentDRE, expandedKeys]);
+
+  const getPreviousValueByKey = (key: string, prev: DREData): number => {
+    if (key === 'receita-bruta') return prev.receitaBruta;
+    if (key === 'deducoes') return -prev.deducoes;
+    if (key === 'receita-liquida') return prev.receitaLiquida;
+    if (key === 'despesas-operacionais') return -prev.despesasOperacionais;
+    if (key === 'resultado-operacional') return prev.resultadoOperacional;
+
+    const parts = key.split('|');
+    if (parts[0] === 'rev') {
+      const cat = prev.receitaPorCategoria.find((c) => c.category === parts[1]);
+      if (!cat) return 0;
+      if (parts.length === 2) return cat.amount;
+      const sub = cat.subcategories.find((s) => s.name === parts[2]);
+      return sub ? sub.amount : 0;
+    }
+    if (parts[0] === 'exp') {
+      const cc = prev.despesasPorCategoria.find((c) => c.category === parts[1]);
+      if (!cc) return 0;
+      if (parts.length === 2) return -cc.amount;
+      const cat = cc.categories.find((c) => c.category === parts[2]);
+      if (!cat) return 0;
+      if (parts.length === 3) return -cat.amount;
+      const sub = cat.subcategories.find((s) => s.name === parts[3]);
+      return sub ? -sub.amount : 0;
+    }
+    return 0;
+  };
 
   const handleExport = () => {
     if (!currentDRE) return;
     const headers = showComparison
       ? ['Linha', 'Valor Atual', 'Valor Anterior', 'Diferença R$', 'Diferença %']
       : ['Linha', 'Valor'];
-    const rows: (string | number)[][] = dreRows.map((row) => {
+
+    // Export sempre com tudo expandido, independente do estado visual da tela
+    const exportRows: { label: string; value: number; key: string }[] = [];
+    exportRows.push({ key: 'receita-bruta', label: 'Receita Bruta', value: currentDRE.receitaBruta });
+    for (const cat of currentDRE.receitaPorCategoria) {
+      exportRows.push({ key: `rev|${cat.category}`, label: `  ${cat.category}`, value: cat.amount });
+      for (const sub of cat.subcategories) {
+        exportRows.push({ key: `rev|${cat.category}|${sub.name}`, label: `    ${sub.name}`, value: sub.amount });
+      }
+    }
+    exportRows.push({ key: 'deducoes', label: '(-) Deduções', value: -currentDRE.deducoes });
+    exportRows.push({ key: 'receita-liquida', label: '(=) Receita Líquida', value: currentDRE.receitaLiquida });
+    exportRows.push({ key: 'despesas-operacionais', label: '(-) Despesas Operacionais', value: -currentDRE.despesasOperacionais });
+    for (const cc of currentDRE.despesasPorCategoria) {
+      exportRows.push({ key: `exp|${cc.category}`, label: `  ${cc.category}`, value: -cc.amount });
+      for (const cat of cc.categories) {
+        exportRows.push({ key: `exp|${cc.category}|${cat.category}`, label: `    ${cat.category}`, value: -cat.amount });
+        for (const sub of cat.subcategories) {
+          exportRows.push({ key: `exp|${cc.category}|${cat.category}|${sub.name}`, label: `      ${sub.name}`, value: -sub.amount });
+        }
+      }
+    }
+    exportRows.push({ key: 'resultado-operacional', label: '(=) Resultado Operacional', value: currentDRE.resultadoOperacional });
+
+    const rows: (string | number)[][] = exportRows.map((row) => {
       if (showComparison && previousDRE) {
-        const prevValue = getPreviousValue(row.label, previousDRE);
+        const prevValue = getPreviousValueByKey(row.key, previousDRE);
         const diff = row.value - prevValue;
         const diffPct = prevValue !== 0 ? (diff / Math.abs(prevValue)) * 100 : 0;
         return [row.label, formatCurrency(row.value), formatCurrency(prevValue), formatCurrency(diff), formatPercent(diffPct)];
@@ -74,19 +187,6 @@ export default function DREScreen() {
     });
     downloadCSV(`dre_${getCompetenceString(filterMonth, filterYear)}.csv`, headers, rows);
     toast.success('Exportação concluída com sucesso.');
-  };
-
-  const getPreviousValue = (label: string, prev: DREData): number => {
-    if (label === 'Receita Bruta') return prev.receitaBruta;
-    if (label === '(-) Deduções') return -prev.deducoes;
-    if (label === '(=) Receita Líquida') return prev.receitaLiquida;
-    if (label === '(-) Despesas Operacionais') return -prev.despesasOperacionais;
-    if (label === '(=) Resultado Operacional') return prev.resultadoOperacional;
-    const revCat = prev.receitaPorCategoria.find((c) => c.category === label);
-    if (revCat) return revCat.amount;
-    const expCat = prev.despesasPorCategoria.find((c) => c.category === label);
-    if (expCat) return -expCat.amount;
-    return 0;
   };
 
   if (loading) {
@@ -153,21 +253,38 @@ export default function DREScreen() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
-                {dreRows.map((row, i) => {
+                {dreRows.map((row) => {
                   const isHeader = row.type === 'header';
                   const isTotal = row.type === 'total';
                   const isCategory = row.type === 'category';
+                  const isSubcategory = row.type === 'subcategory';
+                  const isSubsubcategory = row.type === 'subsubcategory';
                   const isPositive = row.value >= 0;
 
                   let rowClass = '';
                   if (isHeader) rowClass = 'bg-ink-50 font-semibold text-ink-900';
                   else if (isTotal) rowClass = 'bg-primary-50/50 font-bold text-ink-900 border-t-2 border-primary-200';
-                  else if (isCategory) rowClass = 'text-ink-600';
+                  else if (isCategory) rowClass = 'text-ink-700 font-medium';
+                  else if (isSubcategory) rowClass = 'text-ink-600';
+                  else if (isSubsubcategory) rowClass = 'text-ink-500';
+
+                  const paddingLeft = 24 + row.indent * 20;
 
                   return (
-                    <tr key={i} className={rowClass}>
-                      <td className={`px-6 py-3 text-sm ${isCategory ? 'pl-10' : ''} ${isHeader || isTotal ? 'font-semibold' : ''}`}>
-                        {row.label}
+                    <tr key={row.key} className={rowClass}>
+                      <td className={`px-6 py-3 text-sm ${isHeader || isTotal ? 'font-semibold' : ''}`}>
+                        <div
+                          className={`flex items-center gap-1.5 ${row.expandable ? 'cursor-pointer select-none' : ''}`}
+                          style={{ paddingLeft: row.indent > 0 ? `${paddingLeft - 24}px` : undefined }}
+                          onClick={row.expandable ? () => toggleExpand(row.key) : undefined}
+                        >
+                          {row.expandable ? (
+                            row.expanded ? <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-ink-400" /> : <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-ink-400" />
+                          ) : row.indent > 0 ? (
+                            <span className="inline-block w-3.5" />
+                          ) : null}
+                          <span className={row.expandable ? 'hover:underline' : ''}>{row.label}</span>
+                        </div>
                       </td>
                       <td className={`px-6 py-3 text-sm text-right whitespace-nowrap ${isTotal ? 'font-bold' : isHeader ? 'font-semibold' : ''} ${isPositive ? 'text-ink-900' : 'text-error-600'}`}>
                         {formatCurrency(Math.abs(row.value))}{row.value < 0 ? ' (-)' : ''}
@@ -175,10 +292,10 @@ export default function DREScreen() {
                       {showComparison && previousDRE && (
                         <>
                           <td className="px-6 py-3 text-sm text-right text-ink-600 whitespace-nowrap">
-                            {formatCurrency(Math.abs(getPreviousValue(row.label, previousDRE)))}
+                            {formatCurrency(Math.abs(getPreviousValueByKey(row.key, previousDRE)))}
                           </td>
                           {(() => {
-                            const prevVal = getPreviousValue(row.label, previousDRE);
+                            const prevVal = getPreviousValueByKey(row.key, previousDRE);
                             const diff = row.value - prevVal;
                             const diffPct = prevVal !== 0 ? (diff / Math.abs(prevVal)) * 100 : 0;
                             return (
