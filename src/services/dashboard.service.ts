@@ -137,14 +137,14 @@ export async function fetchRevenueByCategory(
   const { startDate, endDate } = getDateRange(competenceMonth, competenceYear);
   const { data, error } = await supabase
     .from('revenues')
-    .select('amount, category:revenue_categories(name)')
+    .select('amount, main_category:revenue_main_categories(name)')
     .gte('revenue_date', startDate)
     .lte('revenue_date', endDate);
   if (error) throw error;
 
   const grouped: Record<string, number> = {};
   for (const r of data ?? []) {
-    const catName = (r.category as unknown as { name: string })?.name ?? 'Sem categoria';
+    const catName = (r.main_category as unknown as { name: string })?.name ?? 'Sem categoria';
     grouped[catName] = (grouped[catName] || 0) + Number(r.amount);
   }
   return Object.entries(grouped).map(([name, value]) => ({ name, value }));
