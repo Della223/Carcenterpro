@@ -248,13 +248,36 @@ export interface DashboardKPIs {
   totalBudget: number;
 }
 
+export interface DRESubItem {
+  name: string;
+  amount: number;
+}
+
+export interface DRERevenueCategoryGroup {
+  category: string;
+  amount: number;
+  subcategories: DRESubItem[];
+}
+
+export interface DREExpenseCategoryGroup {
+  category: string;
+  amount: number;
+  subcategories: DRESubItem[];
+}
+
+export interface DREExpenseCostCenterGroup {
+  category: string;
+  amount: number;
+  categories: DREExpenseCategoryGroup[];
+}
+
 export interface DREData {
   receitaBruta: number;
-  receitaPorCategoria: { category: string; amount: number }[];
+  receitaPorCategoria: DRERevenueCategoryGroup[];
   deducoes: number;
   receitaLiquida: number;
   despesasOperacionais: number;
-  despesasPorCategoria: { category: string; amount: number }[];
+  despesasPorCategoria: DREExpenseCostCenterGroup[];
   resultadoOperacional: number;
   margemOperacional: number;
 }
