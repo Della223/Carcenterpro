@@ -12,12 +12,12 @@ export async function fetchDRE(
   const [revenuesResult, expensesResult] = await Promise.all([
     supabase
       .from('revenues')
-      .select('amount, main_category:revenue_main_categories(name)')
+      .select('amount, main_category:revenue_main_categories(name), subcategory:revenue_subcategories(name)')
       .gte('revenue_date', startDate)
       .lte('revenue_date', endDate),
     supabase
       .from('expenses')
-      .select('category:expense_categories(name), cost_center:cost_centers(name), installments:expense_installments(competence_month, competence_year, amount)')
+      .select('category:expense_categories(name), subcategory:expense_subcategories(name), cost_center:cost_centers(name), installments:expense_installments(competence_month, competence_year, amount)')
       .eq('competence_month', competenceMonth)
       .eq('competence_year', competenceYear),
   ]);
@@ -28,41 +28,69 @@ export async function fetchDRE(
   const revenues = revenuesResult.data ?? [];
   const expenses = expensesResult.data ?? [];
 
-  const receitaPorCategoriaMap: Record<string, number> = {};
+  // ---- Receitas: Categoria Principal -> Subcategoria ----
+  const receitaMap: Record<string, { amount: number; subcategories: Record<string, number> }> = {};
   let receitaBruta = 0;
 
   for (const r of revenues) {
     const catName = (r.main_category as unknown as { name: string })?.name ?? 'Sem categoria';
+    const subName = (r.subcategory as unknown as { name: string })?.name ?? 'Sem subcategoria';
     const amount = Number(r.amount);
-    receitaPorCategoriaMap[catName] = (receitaPorCategoriaMap[catName] || 0) + amount;
+
+    if (!receitaMap[catName]) receitaMap[catName] = { amount: 0, subcategories: {} };
+    receitaMap[catName].amount += amount;
+    receitaMap[catName].subcategories[subName] = (receitaMap[catName].subcategories[subName] || 0) + amount;
     receitaBruta += amount;
   }
 
-  const receitaPorCategoria = Object.entries(receitaPorCategoriaMap).map(([category, amount]) => ({
+  const receitaPorCategoria = Object.entries(receitaMap).map(([category, data]) => ({
     category,
-    amount,
+    amount: data.amount,
+    subcategories: Object.entries(data.subcategories).map(([name, amount]) => ({ name, amount })),
   }));
 
   const deducoes = 0;
   const receitaLiquida = receitaBruta - deducoes;
 
-  const despesasPorCategoriaMap: Record<string, number> = {};
+  // ---- Despesas: Centro de Custo -> Categoria -> Subcategoria ----
+  const despesaMap: Record<string, {
+    amount: number;
+    categories: Record<string, { amount: number; subcategories: Record<string, number> }>;
+  }> = {};
   let despesasOperacionais = 0;
 
   for (const e of expenses) {
+    const ccName = (e.cost_center as unknown as { name: string })?.name ?? 'Sem centro de custo';
     const catName = (e.category as unknown as { name: string })?.name ?? 'Sem categoria';
+    const subName = (e.subcategory as unknown as { name: string })?.name ?? 'Sem subcategoria';
+
     for (const inst of (e.installments as unknown as { competence_month: number; competence_year: number; amount: number }[]) ?? []) {
       if (inst.competence_month === competenceMonth && inst.competence_year === competenceYear) {
         const amount = Number(inst.amount);
-        despesasPorCategoriaMap[catName] = (despesasPorCategoriaMap[catName] || 0) + amount;
+
+        if (!despesaMap[ccName]) despesaMap[ccName] = { amount: 0, categories: {} };
+        despesaMap[ccName].amount += amount;
+
+        if (!despesaMap[ccName].categories[catName]) {
+          despesaMap[ccName].categories[catName] = { amount: 0, subcategories: {} };
+        }
+        despesaMap[ccName].categories[catName].amount += amount;
+        despesaMap[ccName].categories[catName].subcategories[subName] =
+          (despesaMap[ccName].categories[catName].subcategories[subName] || 0) + amount;
+
         despesasOperacionais += amount;
       }
     }
   }
 
-  const despesasPorCategoria = Object.entries(despesasPorCategoriaMap).map(([category, amount]) => ({
-    category,
-    amount,
+  const despesasPorCategoria = Object.entries(despesaMap).map(([costCenter, ccData]) => ({
+    category: costCenter,
+    amount: ccData.amount,
+    categories: Object.entries(ccData.categories).map(([category, catData]) => ({
+      category,
+      amount: catData.amount,
+      subcategories: Object.entries(catData.subcategories).map(([name, amount]) => ({ name, amount })),
+    })),
   }));
 
   const resultadoOperacional = receitaLiquida - despesasOperacionais;
