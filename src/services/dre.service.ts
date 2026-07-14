@@ -12,7 +12,7 @@ export async function fetchDRE(
   const [revenuesResult, expensesResult] = await Promise.all([
     supabase
       .from('revenues')
-      .select('amount, category:revenue_categories(name)')
+      .select('amount, main_category:revenue_main_categories(name)')
       .gte('revenue_date', startDate)
       .lte('revenue_date', endDate),
     supabase
@@ -32,7 +32,7 @@ export async function fetchDRE(
   let receitaBruta = 0;
 
   for (const r of revenues) {
-    const catName = (r.category as unknown as { name: string })?.name ?? 'Sem categoria';
+    const catName = (r.main_category as unknown as { name: string })?.name ?? 'Sem categoria';
     const amount = Number(r.amount);
     receitaPorCategoriaMap[catName] = (receitaPorCategoriaMap[catName] || 0) + amount;
     receitaBruta += amount;
