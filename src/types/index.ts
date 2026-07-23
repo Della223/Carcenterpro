@@ -85,6 +85,8 @@ export interface CostCenter {
   created_at: string;
 }
 
+export type InstallmentMode = 'monthly' | 'fixed_days' | 'custom';
+
 export interface Expense {
   id: string;
   competence_month: number;
@@ -97,6 +99,8 @@ export interface Expense {
   description: string | null;
   total_amount: number;
   installment_count: number;
+  installment_mode: InstallmentMode;
+  installment_interval_days: number | null;
   appropriation_type: string | null;
   payment_date: string | null;
   notes: string | null;

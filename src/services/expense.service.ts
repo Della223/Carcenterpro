@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier } from '../types';
+import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, InstallmentMode } from '../types';
 
 export interface ExpenseFilters {
   competenceMonth?: number;
@@ -22,6 +22,9 @@ export interface ExpenseInput {
   description?: string | null;
   total_amount: number;
   installment_count: number;
+  installment_mode?: InstallmentMode;
+  installment_interval_days?: number | null;
+  custom_due_dates?: string[] | null;
   payment_date: string;
   notes?: string | null;
   created_by?: string;
@@ -32,7 +35,10 @@ function generateInstallments(
   count: number,
   paymentDate: string,
   baseMonth: number,
-  baseYear: number
+  baseYear: number,
+  mode: InstallmentMode = 'monthly',
+  intervalDays?: number | null,
+  customDueDates?: string[] | null
 ): { installment_number: number; due_date: string; amount: number; competence_month: number; competence_year: number; paid: boolean; payment_date: string }[] {
   const baseAmount = Math.floor((totalAmount / count) * 100) / 100;
   const lastAmount = Math.round((totalAmount - baseAmount * (count - 1)) * 100) / 100;
@@ -41,7 +47,16 @@ function generateInstallments(
   const baseDate = new Date(paymentDate + 'T00:00:00');
 
   for (let i = 0; i < count; i++) {
-    const dueDate = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
+    let dueDate: Date;
+    if (mode === 'custom' && customDueDates?.[i]) {
+      dueDate = new Date(customDueDates[i] + 'T00:00:00');
+    } else if (mode === 'fixed_days' && intervalDays) {
+      dueDate = new Date(baseDate);
+      dueDate.setDate(dueDate.getDate() + intervalDays * i);
+    } else {
+      dueDate = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
+    }
+
     let compMonth = baseMonth + i;
     let compYear = baseYear;
     while (compMonth > 12) {
@@ -55,7 +70,7 @@ function generateInstallments(
       competence_month: compMonth,
       competence_year: compYear,
       paid: true,
-      payment_date: paymentDate,
+      payment_date: mode === 'custom' && customDueDates?.[i] ? customDueDates[i] : paymentDate,
     });
   }
   return installments;
@@ -151,7 +166,7 @@ export async function fetchExpenses(filters: ExpenseFilters = {}): Promise<Expen
 }
 
 export async function createExpense(input: ExpenseInput): Promise<Expense> {
-  const { payment_date, ...expenseData } = input;
+  const { payment_date, custom_due_dates, ...expenseData } = input;
   const { data: expense, error: expenseError } = await supabase
     .from('expenses')
     .insert({ ...expenseData, payment_date })
@@ -164,7 +179,10 @@ export async function createExpense(input: ExpenseInput): Promise<Expense> {
     input.installment_count,
     payment_date,
     input.competence_month,
-    input.competence_year
+    input.competence_year,
+    input.installment_mode ?? 'monthly',
+    input.installment_interval_days,
+    custom_due_dates
   );
   const installmentRecords = installments.map((inst) => ({
     expense_id: expense.id,
@@ -186,7 +204,7 @@ export async function createExpense(input: ExpenseInput): Promise<Expense> {
 }
 
 export async function updateExpense(id: string, input: Partial<ExpenseInput>): Promise<Expense> {
-  const { payment_date, ...updateData } = input;
+  const { payment_date, custom_due_dates: _customDueDates, ...updateData } = input;
   const updatePayload: Record<string, unknown> = { ...updateData, updated_at: new Date().toISOString() };
   if (payment_date) updatePayload.payment_date = payment_date;
 
@@ -206,7 +224,10 @@ export async function recalculateInstallments(
   newInstallmentCount: number,
   paymentDate: string,
   baseMonth: number,
-  baseYear: number
+  baseYear: number,
+  installmentMode: InstallmentMode = 'monthly',
+  installmentIntervalDays?: number | null,
+  customDueDates?: string[] | null
 ): Promise<Expense> {
   // Delete existing installments
   const { error: delError } = await supabase
@@ -222,13 +243,24 @@ export async function recalculateInstallments(
       total_amount: newTotalAmount,
       installment_count: newInstallmentCount,
       payment_date: paymentDate,
+      installment_mode: installmentMode,
+      installment_interval_days: installmentIntervalDays ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', expenseId);
   if (expError) throw expError;
 
   // Generate and insert new installments
-  const installments = generateInstallments(newTotalAmount, newInstallmentCount, paymentDate, baseMonth, baseYear);
+  const installments = generateInstallments(
+    newTotalAmount,
+    newInstallmentCount,
+    paymentDate,
+    baseMonth,
+    baseYear,
+    installmentMode,
+    installmentIntervalDays,
+    customDueDates
+  );
   const installmentRecords = installments.map((inst) => ({
     expense_id: expenseId,
     ...inst,

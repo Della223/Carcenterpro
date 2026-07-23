@@ -18,7 +18,13 @@ import {
 import { createAuditLog } from '../services/audit.service';
 import { logChanges, fetchChangeHistory } from '../services/change-history.service';
 import { formatCurrency, formatDate, getCurrentCompetence, getCompetenceString, downloadCSV } from '../utils/format';
-import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, ChangeHistory } from '../types';
+import type { Expense, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, ChangeHistory, InstallmentMode } from '../types';
+
+const INSTALLMENT_MODE_LABELS: Record<InstallmentMode, string> = {
+  monthly: 'Mensal',
+  fixed_days: 'Dias fixos',
+  custom: 'Datas personalizadas',
+};
 
 const MONTH_NAMES = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -65,6 +71,9 @@ interface ExpenseForm {
   payment_date: string;
   total_amount: string;
   installment_count: number;
+  installment_mode: InstallmentMode;
+  installment_interval_days: string;
+  custom_due_dates: string[];
   notes: string;
 }
 
@@ -100,7 +109,9 @@ export default function DespesasScreen() {
     cost_center_id: '', category_id: '', subcategory_id: '',
     supplier_name: '', supplier_id: null,
     payment_date: new Date().toISOString().split('T')[0],
-    total_amount: '', installment_count: 1, notes: '',
+    total_amount: '', installment_count: 1,
+    installment_mode: 'monthly', installment_interval_days: '', custom_due_dates: [],
+    notes: '',
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -113,7 +124,10 @@ export default function DespesasScreen() {
 
   // Recalculate modal
   const [recalcTarget, setRecalcTarget] = useState<Expense | null>(null);
-  const [recalcForm, setRecalcForm] = useState({ total_amount: '', installment_count: 1, payment_date: '' });
+  const [recalcForm, setRecalcForm] = useState({
+    total_amount: '', installment_count: 1, payment_date: '',
+    installment_mode: 'monthly' as InstallmentMode, installment_interval_days: '', custom_due_dates: [] as string[],
+  });
   const [recalcSaving, setRecalcSaving] = useState(false);
 
   // Supplier autocomplete
@@ -159,6 +173,31 @@ export default function DespesasScreen() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Keep custom due-dates array in sync with the installment count
+  useEffect(() => {
+    if (form.installment_mode !== 'custom') return;
+    setForm((prev) => {
+      if (prev.installment_mode !== 'custom') return prev;
+      const count = prev.installment_count;
+      if (prev.custom_due_dates.length === count) return prev;
+      const next = prev.custom_due_dates.slice(0, count);
+      while (next.length < count) next.push('');
+      return { ...prev, custom_due_dates: next };
+    });
+  }, [form.installment_mode, form.installment_count]);
+
+  useEffect(() => {
+    if (recalcForm.installment_mode !== 'custom') return;
+    setRecalcForm((prev) => {
+      if (prev.installment_mode !== 'custom') return prev;
+      const count = prev.installment_count;
+      if (prev.custom_due_dates.length === count) return prev;
+      const next = prev.custom_due_dates.slice(0, count);
+      while (next.length < count) next.push('');
+      return { ...prev, custom_due_dates: next };
+    });
+  }, [recalcForm.installment_mode, recalcForm.installment_count]);
+
   const filteredCategories = useMemo(() => {
     if (!form.cost_center_id) return [];
     return allCategories.filter((c) => c.cost_center_id === form.cost_center_id);
@@ -168,6 +207,28 @@ export default function DespesasScreen() {
     if (!form.category_id) return [];
     return allSubcategories.filter((s) => s.category_id === form.category_id);
   }, [allSubcategories, form.category_id]);
+
+  const previewDueDates = useMemo(() => {
+    if (!form.payment_date) return [];
+    const baseDate = new Date(form.payment_date + 'T00:00:00');
+    const count = form.installment_count;
+    if (form.installment_mode === 'custom') {
+      return form.custom_due_dates.slice(0, count);
+    }
+    if (form.installment_mode === 'fixed_days') {
+      const interval = Number(form.installment_interval_days);
+      if (!interval || interval <= 0) return [];
+      return Array.from({ length: count }, (_, i) => {
+        const d = new Date(baseDate);
+        d.setDate(d.getDate() + interval * i);
+        return d.toISOString().split('T')[0];
+      });
+    }
+    return Array.from({ length: count }, (_, i) => {
+      const d = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
+      return d.toISOString().split('T')[0];
+    });
+  }, [form.payment_date, form.installment_count, form.installment_mode, form.installment_interval_days, form.custom_due_dates]);
 
   useEffect(() => {
     if (!supplierSearch.trim() || !showSuggestions) {
@@ -238,7 +299,9 @@ export default function DespesasScreen() {
       competence_month: month, competence_year: year, cost_center_id: '', category_id: '',
       subcategory_id: '', supplier_name: '', supplier_id: null,
       payment_date: new Date().toISOString().split('T')[0], total_amount: '',
-      installment_count: 1, notes: '',
+      installment_count: 1,
+      installment_mode: 'monthly', installment_interval_days: '', custom_due_dates: [],
+      notes: '',
     });
     setSupplierSearch('');
     setShowSuggestions(false);
@@ -259,6 +322,12 @@ export default function DespesasScreen() {
       payment_date: expense.payment_date ?? expense.installments?.[0]?.due_date ?? new Date().toISOString().split('T')[0],
       total_amount: String(expense.total_amount),
       installment_count: expense.installment_count,
+      installment_mode: expense.installment_mode ?? 'monthly',
+      installment_interval_days: expense.installment_interval_days ? String(expense.installment_interval_days) : '',
+      custom_due_dates: (expense.installments ?? [])
+        .slice()
+        .sort((a, b) => a.installment_number - b.installment_number)
+        .map((inst) => inst.due_date),
       notes: expense.notes ?? '',
     });
     setSupplierSearch(expense.supplier ?? '');
@@ -276,6 +345,16 @@ export default function DespesasScreen() {
     if (!form.payment_date) errors.payment_date = 'Data do pagamento é obrigatória.';
     if (!form.total_amount || Number(form.total_amount) <= 0) errors.total_amount = 'Valor deve ser maior que zero.';
     if (form.installment_count < 1 || form.installment_count > 120) errors.installment_count = 'Parcelas deve ser entre 1 e 120.';
+    if (form.installment_mode === 'fixed_days') {
+      const days = Number(form.installment_interval_days);
+      if (!form.installment_interval_days || days <= 0) errors.installment_interval_days = 'Informe um intervalo em dias maior que zero.';
+    }
+    if (form.installment_mode === 'custom') {
+      const hasEmpty = form.custom_due_dates.slice(0, form.installment_count).some((d) => !d);
+      if (hasEmpty || form.custom_due_dates.length < form.installment_count) {
+        errors.custom_due_dates = 'Informe a data de vencimento de todas as parcelas.';
+      }
+    }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -304,6 +383,9 @@ export default function DespesasScreen() {
         description: null as string | null,
         total_amount: Number(form.total_amount),
         installment_count: Number(form.installment_count),
+        installment_mode: form.installment_mode,
+        installment_interval_days: form.installment_mode === 'fixed_days' ? Number(form.installment_interval_days) : null,
+        custom_due_dates: form.installment_mode === 'custom' ? form.custom_due_dates.slice(0, form.installment_count) : null,
         payment_date: form.payment_date,
         notes: form.notes || null,
         created_by: auditUser ?? undefined,
@@ -371,6 +453,12 @@ export default function DespesasScreen() {
       total_amount: String(expense.total_amount),
       installment_count: expense.installment_count,
       payment_date: expense.payment_date ?? expense.installments?.[0]?.due_date ?? new Date().toISOString().split('T')[0],
+      installment_mode: expense.installment_mode ?? 'monthly',
+      installment_interval_days: expense.installment_interval_days ? String(expense.installment_interval_days) : '',
+      custom_due_dates: (expense.installments ?? [])
+        .slice()
+        .sort((a, b) => a.installment_number - b.installment_number)
+        .map((inst) => inst.due_date),
     });
   };
 
@@ -383,6 +471,20 @@ export default function DespesasScreen() {
     if (recalcForm.installment_count < 1 || recalcForm.installment_count > 120) {
       toast.error('Parcelas deve ser entre 1 e 120.');
       return;
+    }
+    if (recalcForm.installment_mode === 'fixed_days') {
+      const days = Number(recalcForm.installment_interval_days);
+      if (!recalcForm.installment_interval_days || days <= 0) {
+        toast.error('Informe um intervalo em dias maior que zero.');
+        return;
+      }
+    }
+    if (recalcForm.installment_mode === 'custom') {
+      const hasEmpty = recalcForm.custom_due_dates.slice(0, recalcForm.installment_count).some((d) => !d);
+      if (hasEmpty || recalcForm.custom_due_dates.length < recalcForm.installment_count) {
+        toast.error('Informe a data de vencimento de todas as parcelas.');
+        return;
+      }
     }
     setRecalcSaving(true);
     try {
@@ -403,7 +505,10 @@ export default function DespesasScreen() {
         Number(recalcForm.installment_count),
         recalcForm.payment_date,
         recalcTarget.competence_month,
-        recalcTarget.competence_year
+        recalcTarget.competence_year,
+        recalcForm.installment_mode,
+        recalcForm.installment_mode === 'fixed_days' ? Number(recalcForm.installment_interval_days) : null,
+        recalcForm.installment_mode === 'custom' ? recalcForm.custom_due_dates.slice(0, recalcForm.installment_count) : null
       );
       await logChanges('expenses', recalcTarget.id, user?.id ?? null, oldValues, newValues);
       await createAuditLog(user?.id ?? null, 'despesas', 'recalculate', recalcTarget.id, oldValues, newValues);
@@ -465,6 +570,8 @@ export default function DespesasScreen() {
     payment_date: 'Data do Pagamento',
     total_amount: 'Valor Total',
     installment_count: 'Número de Parcelas',
+    installment_mode: 'Tipo de Parcelamento',
+    installment_interval_days: 'Intervalo entre Parcelas (dias)',
     notes: 'Observações',
   };
 
@@ -772,19 +879,76 @@ export default function DespesasScreen() {
             </div>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-ink-700 mb-1.5">Tipo de Parcelamento *</label>
+            <select
+              value={form.installment_mode}
+              onChange={(e) => setForm({ ...form, installment_mode: e.target.value as InstallmentMode })}
+              className="input-field"
+              disabled={!!editingExpense}
+            >
+              {(Object.keys(INSTALLMENT_MODE_LABELS) as InstallmentMode[]).map((mode) => (
+                <option key={mode} value={mode}>{INSTALLMENT_MODE_LABELS[mode]}</option>
+              ))}
+            </select>
+            {editingExpense && (
+              <p className="mt-1 text-xs text-ink-400">Use o botão "Recalcular Parcelas" para alterar.</p>
+            )}
+          </div>
+
+          {form.installment_mode === 'fixed_days' && (
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Intervalo entre Parcelas (dias) *</label>
+              <input
+                type="number"
+                min={1}
+                value={form.installment_interval_days}
+                onChange={(e) => setForm({ ...form, installment_interval_days: e.target.value })}
+                className="input-field"
+                placeholder="Ex: 20"
+                disabled={!!editingExpense}
+              />
+              {formErrors.installment_interval_days && <p className="mt-1 text-xs text-error-600">{formErrors.installment_interval_days}</p>}
+            </div>
+          )}
+
+          {form.installment_mode === 'custom' && (
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Datas de Vencimento das Parcelas *</label>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {Array.from({ length: form.installment_count }, (_, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-xs text-ink-500 w-16 shrink-0">Parcela {i + 1}</span>
+                    <input
+                      type="date"
+                      value={form.custom_due_dates[i] ?? ''}
+                      onChange={(e) => {
+                        const next = [...form.custom_due_dates];
+                        next[i] = e.target.value;
+                        setForm({ ...form, custom_due_dates: next });
+                      }}
+                      className="input-field"
+                      disabled={!!editingExpense}
+                    />
+                  </div>
+                ))}
+              </div>
+              {formErrors.custom_due_dates && <p className="mt-1 text-xs text-error-600">{formErrors.custom_due_dates}</p>}
+            </div>
+          )}
+
           {form.total_amount && Number(form.total_amount) > 0 && form.installment_count > 1 && form.payment_date && (
             <div className="rounded-lg bg-primary-50 p-3">
               <p className="text-xs font-medium text-primary-700 mb-2">
                 Preview: {form.installment_count}x de {formatCurrency(Number(form.total_amount) / form.installment_count)}
               </p>
               <div className="text-xs text-primary-600">
-                {Array.from({ length: Math.min(form.installment_count, 3) }, (_, i) => {
-                  let m = form.competence_month + i;
-                  let y = form.competence_year;
-                  while (m > 12) { m -= 12; y += 1; }
-                  return `${MONTH_NAMES[m - 1]}/${y}`;
-                }).join(' → ')}
-                {form.installment_count > 3 && ' → ...'}
+                {previewDueDates.length === 0
+                  ? '—'
+                  : previewDueDates
+                      .slice(0, 3)
+                      .map((d) => (d ? formatDate(d) : '—'))
+                      .join(' → ') + (form.installment_count > 3 ? ' → ...' : '')}
               </div>
             </div>
           )}
@@ -859,6 +1023,53 @@ export default function DespesasScreen() {
                 className="input-field"
               />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Tipo de Parcelamento *</label>
+              <select
+                value={recalcForm.installment_mode}
+                onChange={(e) => setRecalcForm({ ...recalcForm, installment_mode: e.target.value as InstallmentMode })}
+                className="input-field"
+              >
+                {(Object.keys(INSTALLMENT_MODE_LABELS) as InstallmentMode[]).map((mode) => (
+                  <option key={mode} value={mode}>{INSTALLMENT_MODE_LABELS[mode]}</option>
+                ))}
+              </select>
+            </div>
+            {recalcForm.installment_mode === 'fixed_days' && (
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">Intervalo entre Parcelas (dias) *</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={recalcForm.installment_interval_days}
+                  onChange={(e) => setRecalcForm({ ...recalcForm, installment_interval_days: e.target.value })}
+                  className="input-field"
+                  placeholder="Ex: 20"
+                />
+              </div>
+            )}
+            {recalcForm.installment_mode === 'custom' && (
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">Datas de Vencimento das Parcelas *</label>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {Array.from({ length: recalcForm.installment_count }, (_, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-xs text-ink-500 w-16 shrink-0">Parcela {i + 1}</span>
+                      <input
+                        type="date"
+                        value={recalcForm.custom_due_dates[i] ?? ''}
+                        onChange={(e) => {
+                          const next = [...recalcForm.custom_due_dates];
+                          next[i] = e.target.value;
+                          setRecalcForm({ ...recalcForm, custom_due_dates: next });
+                        }}
+                        className="input-field"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {recalcForm.total_amount && Number(recalcForm.total_amount) > 0 && recalcForm.installment_count > 0 && (
               <div className="rounded-lg bg-primary-50 p-3">
                 <p className="text-xs font-medium text-primary-700">
@@ -883,6 +1094,7 @@ export default function DespesasScreen() {
               <div><span className="text-xs text-ink-500">Data Pagamento:</span><p className="text-sm font-medium">{viewTarget.payment_date ? formatDate(viewTarget.payment_date) : '-'}</p></div>
               <div><span className="text-xs text-ink-500">Valor Total:</span><p className="text-sm font-bold">{formatCurrency(Number(viewTarget.total_amount))}</p></div>
               <div><span className="text-xs text-ink-500">Parcelas:</span><p className="text-sm font-medium">{viewTarget.installment_count}x</p></div>
+              <div><span className="text-xs text-ink-500">Tipo de Parcelamento:</span><p className="text-sm font-medium">{INSTALLMENT_MODE_LABELS[viewTarget.installment_mode ?? 'monthly']}{viewTarget.installment_mode === 'fixed_days' && viewTarget.installment_interval_days ? ` (${viewTarget.installment_interval_days} dias)` : ''}</p></div>
               {viewTarget.notes && <div className="col-span-2"><span className="text-xs text-ink-500">Observações:</span><p className="text-sm font-medium">{viewTarget.notes}</p></div>}
             </div>
             <div>
