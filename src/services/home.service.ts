@@ -16,6 +16,56 @@ export interface HomeData {
   insights: HomeInsight[];
 }
 
+function getLastDayOfMonth(month: number, year: number): number {
+  return new Date(year, month, 0).getDate();
+}
+
+function getPreviousCompetenceLocal(month: number, year: number): { month: number; year: number } {
+  if (month === 1) return { month: 12, year: year - 1 };
+  return { month: month - 1, year };
+}
+
+/**
+ * Recalculates the "vs mês anterior" baseline using an equivalent period
+ * (day 1 through the same day-of-month) instead of the full previous month,
+ * so a partial current month isn't compared against a complete one.
+ * Clamped to the previous month's last day for shorter months (e.g. Jan 31 vs Feb).
+ */
+function computeEquivalentPeriodBaseline(
+  month: number,
+  year: number,
+  revenues: Revenue[],
+  expenses: Expense[]
+): { receitaMesAnterior: number; despesaMesAnterior: number } {
+  const today = new Date();
+  const isCurrentCompetence = today.getFullYear() === year && today.getMonth() + 1 === month;
+  const day = isCurrentCompetence ? today.getDate() : getLastDayOfMonth(month, year);
+
+  const prev = getPreviousCompetenceLocal(month, year);
+  const prevLastDay = getLastDayOfMonth(prev.month, prev.year);
+  const prevDay = Math.min(day, prevLastDay);
+  const prevStartDate = `${prev.year}-${String(prev.month).padStart(2, '0')}-01`;
+  const prevEndDate = `${prev.year}-${String(prev.month).padStart(2, '0')}-${String(prevDay).padStart(2, '0')}`;
+
+  const receitaMesAnterior = revenues
+    .filter((r) => r.revenue_date >= prevStartDate && r.revenue_date <= prevEndDate)
+    .reduce((s, r) => s + Number(r.amount), 0);
+
+  let despesaMesAnterior = 0;
+  for (const e of expenses) {
+    if (e.confirmation_status === 'pending_confirmation') continue;
+    for (const inst of e.installments ?? []) {
+      const instMonth = inst.competence_month ?? e.competence_month;
+      const instYear = inst.competence_year ?? e.competence_year;
+      if (instMonth === prev.month && instYear === prev.year && inst.due_date <= prevEndDate) {
+        despesaMesAnterior += Number(inst.amount);
+      }
+    }
+  }
+
+  return { receitaMesAnterior, despesaMesAnterior };
+}
+
 function isWeekend(date: Date): boolean {
   const day = date.getDay();
   return day === 0 || day === 6;
@@ -300,13 +350,29 @@ export async function fetchHomeData(month: number, year: number): Promise<HomeDa
   const startDate = `${prevMonthDate.year}-${String(prevMonthDate.month).padStart(2, '0')}-01`;
   const endDate = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
 
-  const [kpis, revenues, expenses, marketing, budgets] = await Promise.all([
+  const [kpisRaw, revenues, expenses, marketing, budgets] = await Promise.all([
     fetchDashboardKPIs(month, year),
     fetchRevenues({ startDate, endDate }),
     fetchExpenses({}),
     fetchMarketingPosts(),
     fetchBudgets(year),
   ]);
+
+  const { receitaMesAnterior, despesaMesAnterior } = computeEquivalentPeriodBaseline(month, year, revenues, expenses);
+  const resultadoMesAnterior = receitaMesAnterior - despesaMesAnterior;
+  const variacaoReceita = receitaMesAnterior > 0 ? ((kpisRaw.receitaAcumulada - receitaMesAnterior) / receitaMesAnterior) * 100 : 0;
+  const variacaoDespesa = despesaMesAnterior > 0 ? ((kpisRaw.despesaAcumulada - despesaMesAnterior) / despesaMesAnterior) * 100 : 0;
+  const variacaoResultado = resultadoMesAnterior !== 0 ? ((kpisRaw.resultado - resultadoMesAnterior) / Math.abs(resultadoMesAnterior)) * 100 : 0;
+
+  const kpis: DashboardKPIs = {
+    ...kpisRaw,
+    receitaMesAnterior,
+    despesaMesAnterior,
+    resultadoMesAnterior,
+    variacaoReceita,
+    variacaoDespesa,
+    variacaoResultado,
+  };
 
   const { calendar, consecutiveEmptyDays } = await fetchCalendarData(month, year, revenues, expenses);
   const insights = generateInsights(kpis, revenues, expenses, budgets, marketing, consecutiveEmptyDays);
