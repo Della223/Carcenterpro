@@ -86,6 +86,7 @@ export interface CostCenter {
 }
 
 export type InstallmentMode = 'monthly' | 'fixed_days' | 'custom';
+export type ConfirmationStatus = 'confirmed' | 'pending_confirmation';
 
 export interface Expense {
   id: string;
@@ -104,6 +105,8 @@ export interface Expense {
   appropriation_type: string | null;
   payment_date: string | null;
   notes: string | null;
+  recurring_expense_id: string | null;
+  confirmation_status: ConfirmationStatus;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -113,6 +116,29 @@ export interface Expense {
   supplier_ref?: Supplier | null;
   user?: User | null;
   installments?: ExpenseInstallment[];
+}
+
+export interface RecurringExpense {
+  id: string;
+  description: string;
+  category_id: string;
+  subcategory_id: string | null;
+  cost_center_id: string;
+  supplier_id: string | null;
+  supplier: string | null;
+  due_day: number;
+  last_confirmed_amount: number;
+  start_month: number;
+  start_year: number;
+  end_date: string | null;
+  active: boolean;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  category?: ExpenseCategory;
+  subcategory?: ExpenseSubcategory | null;
+  cost_center?: CostCenter;
 }
 
 export interface ExpenseInstallment {

@@ -204,8 +204,9 @@ export async function createExpense(input: ExpenseInput): Promise<Expense> {
 }
 
 export async function updateExpense(id: string, input: Partial<ExpenseInput>): Promise<Expense> {
-  const { payment_date, custom_due_dates: _customDueDates, ...updateData } = input;
+  const { payment_date, ...updateData } = input;
   const updatePayload: Record<string, unknown> = { ...updateData, updated_at: new Date().toISOString() };
+  delete updatePayload.custom_due_dates;
   if (payment_date) updatePayload.payment_date = payment_date;
 
   const { data, error } = await supabase

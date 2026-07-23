@@ -25,7 +25,8 @@ async function fetchMonthData(month: number, year: number) {
       .from('expenses')
       .select('*, installments:expense_installments(*)')
       .eq('competence_month', month)
-      .eq('competence_year', year),
+      .eq('competence_year', year)
+      .neq('confirmation_status', 'pending_confirmation'),
   ]);
   if (revenuesResult.error) throw revenuesResult.error;
   if (expensesResult.error) throw expensesResult.error;
@@ -176,7 +177,8 @@ export async function fetchExpenseByCategory(
     .from('expenses')
     .select('category:expense_categories(name), installments:expense_installments(competence_month, competence_year, amount)')
     .eq('competence_month', competenceMonth)
-    .eq('competence_year', competenceYear);
+    .eq('competence_year', competenceYear)
+    .neq('confirmation_status', 'pending_confirmation');
   if (error) throw error;
 
   const grouped: Record<string, number> = {};
@@ -214,7 +216,8 @@ export async function fetchCostCenterDistribution(
     .from('expenses')
     .select('cost_center:cost_centers(name), installments:expense_installments(competence_month, competence_year, amount)')
     .eq('competence_month', competenceMonth)
-    .eq('competence_year', competenceYear);
+    .eq('competence_year', competenceYear)
+    .neq('confirmation_status', 'pending_confirmation');
   if (error) throw error;
 
   const grouped: Record<string, number> = {};

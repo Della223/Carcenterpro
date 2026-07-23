@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, Download, Search, Pencil, Trash2, Eye, CreditCard, DollarSign, Layers, Building2, Tag, Calendar, History, RefreshCw } from 'lucide-react';
+import { Plus, Download, Search, Pencil, Trash2, Eye, CreditCard, DollarSign, Layers, Building2, Tag, Calendar, History, RefreshCw, CheckCircle2, Repeat } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ui/Toast';
 import Modal from '../components/ui/Modal';
@@ -15,6 +15,10 @@ import {
   fetchExpenseCategories, fetchSubcategories, fetchCostCenters,
   fetchSuppliers, findOrCreateSupplier,
 } from '../services/expense.service';
+import {
+  createRecurringExpense, confirmRecurringOccurrence, endRecurringExpense,
+  ensureRecurringOccurrencesGenerated,
+} from '../services/recurring-expense.service';
 import { createAuditLog } from '../services/audit.service';
 import { logChanges, fetchChangeHistory } from '../services/change-history.service';
 import { formatCurrency, formatDate, getCurrentCompetence, getCompetenceString, downloadCSV } from '../utils/format';
@@ -74,6 +78,9 @@ interface ExpenseForm {
   installment_mode: InstallmentMode;
   installment_interval_days: string;
   custom_due_dates: string[];
+  is_recurring: boolean;
+  recurring_due_day: string;
+  recurring_end_date: string;
   notes: string;
 }
 
@@ -111,6 +118,7 @@ export default function DespesasScreen() {
     payment_date: new Date().toISOString().split('T')[0],
     total_amount: '', installment_count: 1,
     installment_mode: 'monthly', installment_interval_days: '', custom_due_dates: [],
+    is_recurring: false, recurring_due_day: '', recurring_end_date: '',
     notes: '',
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -129,6 +137,11 @@ export default function DespesasScreen() {
     installment_mode: 'monthly' as InstallmentMode, installment_interval_days: '', custom_due_dates: [] as string[],
   });
   const [recalcSaving, setRecalcSaving] = useState(false);
+
+  // Recurring expense confirmation modal
+  const [confirmTarget, setConfirmTarget] = useState<Expense | null>(null);
+  const [confirmAmount, setConfirmAmount] = useState('');
+  const [confirmSaving, setConfirmSaving] = useState(false);
 
   // Supplier autocomplete
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -152,6 +165,7 @@ export default function DespesasScreen() {
     setLoading(true);
     setError(false);
     try {
+      await ensureRecurringOccurrencesGenerated();
       const [exps, cats, subs, ccs, sups] = await Promise.all([
         fetchExpenses({}),
         fetchExpenseCategories(),
@@ -279,6 +293,7 @@ export default function DespesasScreen() {
     const currentYear = Number(filters.competenceYear);
 
     for (const e of filteredExpenses) {
+      if (e.confirmation_status === 'pending_confirmation') continue;
       totalCompetence += Number(e.total_amount);
       for (const inst of e.installments ?? []) {
         const instMonth = inst.competence_month ?? e.competence_month;
@@ -301,6 +316,7 @@ export default function DespesasScreen() {
       payment_date: new Date().toISOString().split('T')[0], total_amount: '',
       installment_count: 1,
       installment_mode: 'monthly', installment_interval_days: '', custom_due_dates: [],
+      is_recurring: false, recurring_due_day: '', recurring_end_date: '',
       notes: '',
     });
     setSupplierSearch('');
@@ -328,6 +344,7 @@ export default function DespesasScreen() {
         .slice()
         .sort((a, b) => a.installment_number - b.installment_number)
         .map((inst) => inst.due_date),
+      is_recurring: false, recurring_due_day: '', recurring_end_date: '',
       notes: expense.notes ?? '',
     });
     setSupplierSearch(expense.supplier ?? '');
@@ -342,17 +359,23 @@ export default function DespesasScreen() {
     if (!form.cost_center_id) errors.cost_center_id = 'Centro de custo é obrigatório.';
     if (!form.category_id) errors.category_id = 'Categoria é obrigatória.';
     if (filteredSubcategories.length > 0 && !form.subcategory_id) errors.subcategory_id = 'Subcategoria é obrigatória.';
-    if (!form.payment_date) errors.payment_date = 'Data do pagamento é obrigatória.';
     if (!form.total_amount || Number(form.total_amount) <= 0) errors.total_amount = 'Valor deve ser maior que zero.';
-    if (form.installment_count < 1 || form.installment_count > 120) errors.installment_count = 'Parcelas deve ser entre 1 e 120.';
-    if (form.installment_mode === 'fixed_days') {
-      const days = Number(form.installment_interval_days);
-      if (!form.installment_interval_days || days <= 0) errors.installment_interval_days = 'Informe um intervalo em dias maior que zero.';
-    }
-    if (form.installment_mode === 'custom') {
-      const hasEmpty = form.custom_due_dates.slice(0, form.installment_count).some((d) => !d);
-      if (hasEmpty || form.custom_due_dates.length < form.installment_count) {
-        errors.custom_due_dates = 'Informe a data de vencimento de todas as parcelas.';
+
+    if (form.is_recurring) {
+      const day = Number(form.recurring_due_day);
+      if (!form.recurring_due_day || day < 1 || day > 31) errors.recurring_due_day = 'Informe um dia de vencimento entre 1 e 31.';
+    } else {
+      if (!form.payment_date) errors.payment_date = 'Data do pagamento é obrigatória.';
+      if (form.installment_count < 1 || form.installment_count > 120) errors.installment_count = 'Parcelas deve ser entre 1 e 120.';
+      if (form.installment_mode === 'fixed_days') {
+        const days = Number(form.installment_interval_days);
+        if (!form.installment_interval_days || days <= 0) errors.installment_interval_days = 'Informe um intervalo em dias maior que zero.';
+      }
+      if (form.installment_mode === 'custom') {
+        const hasEmpty = form.custom_due_dates.slice(0, form.installment_count).some((d) => !d);
+        if (hasEmpty || form.custom_due_dates.length < form.installment_count) {
+          errors.custom_due_dates = 'Informe a data de vencimento de todas as parcelas.';
+        }
       }
     }
     setFormErrors(errors);
@@ -418,6 +441,24 @@ export default function DespesasScreen() {
         await logChanges('expenses', editingExpense.id, auditUser, oldValues, newValues);
         await createAuditLog(auditUser, 'despesas', 'update', editingExpense.id, oldValues, newValues);
         toast.success('Despesa atualizada com sucesso.');
+      } else if (form.is_recurring) {
+        const { recurring, expense: created } = await createRecurringExpense({
+          description: supplierName || (allCategories.find((c) => c.id === form.category_id)?.name ?? 'Despesa recorrente'),
+          category_id: form.category_id,
+          subcategory_id: form.subcategory_id || null,
+          cost_center_id: form.cost_center_id,
+          supplier: supplierName || null,
+          supplier_id: supplierId,
+          due_day: Number(form.recurring_due_day),
+          initial_amount: Number(form.total_amount),
+          start_month: form.competence_month,
+          start_year: form.competence_year,
+          end_date: form.recurring_end_date || null,
+          notes: form.notes || null,
+          created_by: auditUser ?? undefined,
+        });
+        await createAuditLog(auditUser, 'despesas', 'create', created.id, null, { ...input, recurring_expense_id: recurring.id });
+        toast.success('Despesa recorrente cadastrada com sucesso.');
       } else {
         const created = await createExpense(input);
         await createAuditLog(auditUser, 'despesas', 'create', created.id, null, input);
@@ -520,6 +561,45 @@ export default function DespesasScreen() {
       console.error(err);
     } finally {
       setRecalcSaving(false);
+    }
+  };
+
+  const handleOpenConfirm = (expense: Expense) => {
+    setConfirmTarget(expense);
+    setConfirmAmount(String(expense.total_amount));
+  };
+
+  const handleConfirmSave = async () => {
+    if (!confirmTarget) return;
+    if (!confirmAmount || Number(confirmAmount) <= 0) {
+      toast.error('Valor deve ser maior que zero.');
+      return;
+    }
+    setConfirmSaving(true);
+    try {
+      await confirmRecurringOccurrence(confirmTarget.id, Number(confirmAmount));
+      await logChanges('expenses', confirmTarget.id, user?.id ?? null, { total_amount: confirmTarget.total_amount }, { total_amount: Number(confirmAmount) });
+      await createAuditLog(user?.id ?? null, 'despesas', 'confirm_recurring', confirmTarget.id, { total_amount: confirmTarget.total_amount }, { total_amount: Number(confirmAmount) });
+      toast.success('Despesa recorrente confirmada com sucesso.');
+      setConfirmTarget(null);
+      await loadData();
+    } catch (err) {
+      toast.error('Erro ao confirmar despesa recorrente.');
+      console.error(err);
+    } finally {
+      setConfirmSaving(false);
+    }
+  };
+
+  const handleEndRecurring = async (expense: Expense) => {
+    if (!expense.recurring_expense_id) return;
+    try {
+      await endRecurringExpense(expense.recurring_expense_id);
+      toast.success('Recorrência encerrada. Nenhum novo lançamento será gerado.');
+      setViewTarget(null);
+      await loadData();
+    } catch {
+      toast.error('Não foi possível encerrar a recorrência.');
     }
   };
 
@@ -669,17 +749,30 @@ export default function DespesasScreen() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
-                {filteredExpenses.map((e) => (
+                {filteredExpenses.map((e) => {
+                  const isPending = e.confirmation_status === 'pending_confirmation';
+                  const isOverdue = isPending && !!e.payment_date && e.payment_date < new Date().toISOString().split('T')[0];
+                  return (
                   <tr key={e.id} className="hover:bg-ink-50/50 transition-colors">
                     <td className="px-4 py-3 text-sm text-ink-700 whitespace-nowrap">{getCompetenceString(e.competence_month, e.competence_year)}</td>
-                    <td className="px-4 py-3 text-sm font-medium text-ink-900">{e.supplier ?? '-'}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-ink-900">
+                      {e.supplier ?? '-'}
+                      {e.recurring_expense_id && <Repeat className="inline-block ml-1.5 h-3 w-3 text-primary-500 align-text-top" />}
+                    </td>
                     <td className="px-4 py-3 text-sm text-ink-600">{e.cost_center?.name ?? '-'}</td>
                     <td className="px-4 py-3 text-sm text-ink-600">
                       {e.category?.name ?? '-'}
                       {e.subcategory && <span className="text-ink-400 text-xs block">{e.subcategory.name}</span>}
                     </td>
                     <td className="px-4 py-3 text-sm font-semibold text-ink-900 text-right whitespace-nowrap">{formatCurrency(Number(e.total_amount))}</td>
-                    <td className="px-4 py-3 text-sm text-ink-600 text-center">{e.installment_count}x</td>
+                    <td className="px-4 py-3 text-sm text-ink-600 text-center">
+                      {e.installment_count}x
+                      {isPending && (
+                        <span className="block mt-1">
+                          <Badge variant={isOverdue ? 'error' : 'warning'}>{isOverdue ? 'Atrasada' : 'Pendente'}</Badge>
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-sm text-ink-600 whitespace-nowrap">{e.payment_date ? formatDate(e.payment_date) : '-'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
@@ -689,19 +782,28 @@ export default function DespesasScreen() {
                         <button onClick={() => handleOpenHistory(e)} className="p-1.5 text-ink-500 hover:text-accent-600 hover:bg-accent-50 rounded-md transition-colors" title="Histórico">
                           <History className="h-4 w-4" />
                         </button>
-                        <button onClick={() => handleOpenRecalc(e)} className="p-1.5 text-ink-500 hover:text-secondary-600 hover:bg-secondary-50 rounded-md transition-colors" title="Recalcular Parcelas">
-                          <RefreshCw className="h-4 w-4" />
-                        </button>
-                        <button onClick={() => handleOpenEdit(e)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Editar">
-                          <Pencil className="h-4 w-4" />
-                        </button>
+                        {isPending ? (
+                          <button onClick={() => handleOpenConfirm(e)} className="p-1.5 text-warning-600 hover:text-warning-700 hover:bg-warning-50 rounded-md transition-colors" title="Confirmar Despesa Recorrente">
+                            <CheckCircle2 className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={() => handleOpenRecalc(e)} className="p-1.5 text-ink-500 hover:text-secondary-600 hover:bg-secondary-50 rounded-md transition-colors" title="Recalcular Parcelas">
+                              <RefreshCw className="h-4 w-4" />
+                            </button>
+                            <button onClick={() => handleOpenEdit(e)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Editar">
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
                         <button onClick={() => setDeleteTarget(e)} className="p-1.5 text-ink-500 hover:text-error-600 hover:bg-error-50 rounded-md transition-colors" title="Excluir">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -836,17 +938,78 @@ export default function DespesasScreen() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-ink-700 mb-1.5">Data do Pagamento *</label>
-            <input
-              type="date"
-              value={form.payment_date}
-              onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
-              className="input-field"
-            />
-            {formErrors.payment_date && <p className="mt-1 text-xs text-error-600">{formErrors.payment_date}</p>}
-          </div>
+          {!editingExpense && (
+            <div className="rounded-lg border border-ink-200 p-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={form.is_recurring}
+                  onChange={(e) => setForm({ ...form, is_recurring: e.target.checked })}
+                  className="h-4 w-4 rounded border-ink-300 text-primary-600 focus:ring-primary-500"
+                />
+                <Repeat className="h-4 w-4 text-primary-600" />
+                Despesa recorrente
+              </label>
+              <p className="mt-1 text-xs text-ink-400">
+                Todo mês o sistema gera automaticamente o próximo lançamento repetindo o último valor confirmado, aguardando sua confirmação.
+              </p>
+            </div>
+          )}
 
+          {form.is_recurring ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-1.5">Dia de Vencimento *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={form.recurring_due_day}
+                    onChange={(e) => setForm({ ...form, recurring_due_day: e.target.value })}
+                    className="input-field"
+                    placeholder="Ex: 5"
+                  />
+                  {formErrors.recurring_due_day && <p className="mt-1 text-xs text-error-600">{formErrors.recurring_due_day}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-1.5">Data de Término (opcional)</label>
+                  <input
+                    type="date"
+                    value={form.recurring_end_date}
+                    onChange={(e) => setForm({ ...form, recurring_end_date: e.target.value })}
+                    className="input-field"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">Valor Inicial (R$) *</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.total_amount}
+                  onChange={(e) => setForm({ ...form, total_amount: e.target.value })}
+                  className="input-field"
+                  placeholder="0,00"
+                />
+                {formErrors.total_amount && <p className="mt-1 text-xs text-error-600">{formErrors.total_amount}</p>}
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Data do Pagamento *</label>
+              <input
+                type="date"
+                value={form.payment_date}
+                onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
+                className="input-field"
+              />
+              {formErrors.payment_date && <p className="mt-1 text-xs text-error-600">{formErrors.payment_date}</p>}
+            </div>
+          )}
+
+          {!form.is_recurring && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-ink-700 mb-1.5">Valor Total (R$) *</label>
@@ -878,7 +1041,9 @@ export default function DespesasScreen() {
               )}
             </div>
           </div>
+          )}
 
+          {!form.is_recurring && (
           <div>
             <label className="block text-sm font-medium text-ink-700 mb-1.5">Tipo de Parcelamento *</label>
             <select
@@ -895,8 +1060,9 @@ export default function DespesasScreen() {
               <p className="mt-1 text-xs text-ink-400">Use o botão "Recalcular Parcelas" para alterar.</p>
             )}
           </div>
+          )}
 
-          {form.installment_mode === 'fixed_days' && (
+          {!form.is_recurring && form.installment_mode === 'fixed_days' && (
             <div>
               <label className="block text-sm font-medium text-ink-700 mb-1.5">Intervalo entre Parcelas (dias) *</label>
               <input
@@ -912,7 +1078,7 @@ export default function DespesasScreen() {
             </div>
           )}
 
-          {form.installment_mode === 'custom' && (
+          {!form.is_recurring && form.installment_mode === 'custom' && (
             <div>
               <label className="block text-sm font-medium text-ink-700 mb-1.5">Datas de Vencimento das Parcelas *</label>
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
@@ -937,7 +1103,7 @@ export default function DespesasScreen() {
             </div>
           )}
 
-          {form.total_amount && Number(form.total_amount) > 0 && form.installment_count > 1 && form.payment_date && (
+          {!form.is_recurring && form.total_amount && Number(form.total_amount) > 0 && form.installment_count > 1 && form.payment_date && (
             <div className="rounded-lg bg-primary-50 p-3">
               <p className="text-xs font-medium text-primary-700 mb-2">
                 Preview: {form.installment_count}x de {formatCurrency(Number(form.total_amount) / form.installment_count)}
@@ -1081,6 +1247,44 @@ export default function DespesasScreen() {
         )}
       </Modal>
 
+      {/* Confirm Recurring Occurrence Modal */}
+      <Modal
+        open={!!confirmTarget}
+        onClose={() => setConfirmTarget(null)}
+        title="Confirmar Despesa Recorrente"
+        size="md"
+        footer={
+          <>
+            <button onClick={() => setConfirmTarget(null)} className="btn-secondary">Cancelar</button>
+            <button onClick={handleConfirmSave} disabled={confirmSaving} className="btn-primary">
+              {confirmSaving ? 'Confirmando...' : 'Confirmar'}
+            </button>
+          </>
+        }
+      >
+        {confirmTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-700">
+              <strong>{confirmTarget.supplier || confirmTarget.category?.name}</strong> de{' '}
+              {getCompetenceString(confirmTarget.competence_month, confirmTarget.competence_year)} está previsto em{' '}
+              <strong>{formatCurrency(Number(confirmTarget.total_amount))}</strong> (igual ao mês anterior), com vencimento em{' '}
+              {confirmTarget.payment_date ? formatDate(confirmTarget.payment_date) : '-'}. Confirme o valor ou altere-o abaixo.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Valor (R$) *</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={confirmAmount}
+                onChange={(e) => setConfirmAmount(e.target.value)}
+                className="input-field"
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* View Modal */}
       <Modal open={!!viewTarget} onClose={() => setViewTarget(null)} title="Detalhes da Despesa" size="lg">
         {viewTarget && (
@@ -1097,6 +1301,22 @@ export default function DespesasScreen() {
               <div><span className="text-xs text-ink-500">Tipo de Parcelamento:</span><p className="text-sm font-medium">{INSTALLMENT_MODE_LABELS[viewTarget.installment_mode ?? 'monthly']}{viewTarget.installment_mode === 'fixed_days' && viewTarget.installment_interval_days ? ` (${viewTarget.installment_interval_days} dias)` : ''}</p></div>
               {viewTarget.notes && <div className="col-span-2"><span className="text-xs text-ink-500">Observações:</span><p className="text-sm font-medium">{viewTarget.notes}</p></div>}
             </div>
+
+            {viewTarget.recurring_expense_id && (
+              <div className="flex items-center justify-between rounded-lg bg-primary-50 p-3">
+                <div className="flex items-center gap-2 text-sm text-primary-800">
+                  <Repeat className="h-4 w-4" />
+                  <span>
+                    Despesa recorrente
+                    {viewTarget.confirmation_status === 'pending_confirmation' && ' — aguardando confirmação'}
+                  </span>
+                </div>
+                <button onClick={() => handleEndRecurring(viewTarget)} className="text-xs font-medium text-primary-700 hover:text-primary-900 underline">
+                  Encerrar Recorrência
+                </button>
+              </div>
+            )}
+
             <div>
               <h4 className="text-sm font-semibold text-ink-900 mb-2">Parcelas</h4>
               <div className="overflow-hidden rounded-lg ring-1 ring-ink-200">

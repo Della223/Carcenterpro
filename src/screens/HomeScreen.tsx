@@ -1,26 +1,44 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Repeat, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../components/ui/Toast';
 import ErrorState from '../components/ui/ErrorState';
 import { KPISkeleton, Skeleton } from '../components/ui/Skeleton';
 import Badge from '../components/ui/Badge';
+import Modal from '../components/ui/Modal';
 import { fetchHomeData, type HomeData } from '../services/home.service';
-import { getCurrentCompetence, getCompetenceString, formatDate } from '../utils/format';
+import {
+  fetchPendingRecurringExpenses, confirmRecurringOccurrence, ensureRecurringOccurrencesGenerated,
+} from '../services/recurring-expense.service';
+import { getCurrentCompetence, getCompetenceString, formatDate, formatCurrency } from '../utils/format';
 import ExecutivePanel from '../components/home/ExecutivePanel';
 import TodayPanel from '../components/home/TodayPanel';
 import ManagerAssistant from '../components/home/ManagerAssistant';
+import type { Expense } from '../types';
 
 export default function HomeScreen() {
   const { user } = useAuth();
+  const toast = useToast();
   const { month, year } = getCurrentCompetence();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [data, setData] = useState<HomeData | null>(null);
 
+  const [pendingRecurring, setPendingRecurring] = useState<Expense[]>([]);
+  const [confirmTarget, setConfirmTarget] = useState<Expense | null>(null);
+  const [confirmAmount, setConfirmAmount] = useState('');
+  const [confirmSaving, setConfirmSaving] = useState(false);
+
   const loadData = useCallback(async () => {
     try {
-      const homeData = await fetchHomeData(month, year);
+      await ensureRecurringOccurrencesGenerated();
+      const [homeData, pending] = await Promise.all([
+        fetchHomeData(month, year),
+        fetchPendingRecurringExpenses(month, year),
+      ]);
       setData(homeData);
+      setPendingRecurring(pending);
     } catch {
       setError(true);
     } finally {
@@ -29,6 +47,31 @@ export default function HomeScreen() {
   }, [month, year]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const handleOpenConfirm = (expense: Expense) => {
+    setConfirmTarget(expense);
+    setConfirmAmount(String(expense.total_amount));
+  };
+
+  const handleConfirmSave = async () => {
+    if (!confirmTarget) return;
+    if (!confirmAmount || Number(confirmAmount) <= 0) {
+      toast.error('Valor deve ser maior que zero.');
+      return;
+    }
+    setConfirmSaving(true);
+    try {
+      await confirmRecurringOccurrence(confirmTarget.id, Number(confirmAmount));
+      toast.success('Despesa recorrente confirmada com sucesso.');
+      setConfirmTarget(null);
+      await loadData();
+    } catch (err) {
+      toast.error('Erro ao confirmar despesa recorrente.');
+      console.error(err);
+    } finally {
+      setConfirmSaving(false);
+    }
+  };
 
   const handleRetry = async () => {
     setError(false);
@@ -70,6 +113,36 @@ export default function HomeScreen() {
         <Badge variant="info" size="md">{formatDate(new Date().toISOString())}</Badge>
       </div>
 
+      {/* Despesas Recorrentes Pendentes */}
+      {pendingRecurring.length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-base font-semibold text-ink-900 mb-4 flex items-center gap-2">
+            <Repeat className="h-4 w-4 text-primary-600" />
+            Despesas Recorrentes Pendentes
+          </h3>
+          <div className="space-y-2">
+            {pendingRecurring.map((e) => {
+              const isOverdue = !!e.payment_date && e.payment_date < new Date().toISOString().split('T')[0];
+              return (
+                <div key={e.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isOverdue ? 'border-error-200 bg-error-50' : 'border-warning-200 bg-warning-50'}`}>
+                  <div className="flex items-start gap-2 min-w-0">
+                    {isOverdue && <AlertTriangle className="h-4 w-4 text-error-600 mt-0.5 shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-ink-900 truncate">{e.supplier || e.category?.name || 'Despesa recorrente'}</p>
+                      <p className="text-xs text-ink-500">
+                        Previsto: {formatCurrency(Number(e.total_amount))} · Vencimento: {e.payment_date ? formatDate(e.payment_date) : '-'}
+                        {isOverdue && ' · Atrasada'}
+                      </p>
+                    </div>
+                  </div>
+                  <button onClick={() => handleOpenConfirm(e)} className="btn-secondary shrink-0">Confirmar</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 2. KPIs */}
       <ExecutivePanel kpis={data.kpis} />
 
@@ -78,6 +151,43 @@ export default function HomeScreen() {
 
       {/* 4. Requer Atenção + 5. Destaques Positivos */}
       <TodayPanel insights={data.insights} />
+
+      {/* Confirm Recurring Occurrence Modal */}
+      <Modal
+        open={!!confirmTarget}
+        onClose={() => setConfirmTarget(null)}
+        title="Confirmar Despesa Recorrente"
+        size="md"
+        footer={
+          <>
+            <button onClick={() => setConfirmTarget(null)} className="btn-secondary">Cancelar</button>
+            <button onClick={handleConfirmSave} disabled={confirmSaving} className="btn-primary">
+              {confirmSaving ? 'Confirmando...' : 'Confirmar'}
+            </button>
+          </>
+        }
+      >
+        {confirmTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-700">
+              <strong>{confirmTarget.supplier || confirmTarget.category?.name}</strong> está previsto em{' '}
+              <strong>{formatCurrency(Number(confirmTarget.total_amount))}</strong> (igual ao mês anterior), com vencimento em{' '}
+              {confirmTarget.payment_date ? formatDate(confirmTarget.payment_date) : '-'}. Confirme o valor ou altere-o abaixo.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Valor (R$) *</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={confirmAmount}
+                onChange={(e) => setConfirmAmount(e.target.value)}
+                className="input-field"
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
