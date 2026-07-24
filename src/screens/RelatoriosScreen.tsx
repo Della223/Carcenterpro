@@ -106,14 +106,14 @@ export default function RelatoriosScreen() {
           ['Margem Operacional', `${data.margemOperacional.toFixed(2)}%`],
         ];
       } else if (reportId === 'orcamentos') {
-        const data = await fetchBudgets(filterYear);
-        const exps = await fetchExpenses({ competenceYear: filterYear });
-        title = `Orçados x Realizado — ${filterYear}`;
+        const data = await fetchBudgets(filterYear, filterMonth);
+        const exps = await fetchExpenses({ competenceYear: filterYear, competenceMonth: filterMonth });
+        title = `Orçados x Realizado — ${getCompetenceString(filterMonth, filterYear)}`;
         headers = ['Categoria', 'Orçado', 'Realizado', 'Diferença', 'Execução %'];
         rows = data.map((b: Budget) => {
           const actual = exps.filter((e) => e.category_id === b.category_id)
             .reduce((s, e) => {
-              const insts = (e.installments ?? []).filter((i) => i.paid && new Date(i.due_date).getFullYear() === filterYear);
+              const insts = (e.installments ?? []).filter((i) => i.competence_month === filterMonth && i.competence_year === filterYear);
               return s + insts.reduce((sum, i) => sum + Number(i.amount), 0);
             }, 0);
           return [

@@ -155,11 +155,15 @@ export interface ExpenseInstallment {
   created_at: string;
 }
 
+export type BudgetOrigin = 'automatico' | 'manual';
+
 export interface Budget {
   id: string;
   year: number;
+  month: number;
   category_id: string;
   planned_amount: number;
+  origin: BudgetOrigin;
   created_by: string | null;
   created_at: string;
   updated_at: string;

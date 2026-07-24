@@ -70,7 +70,8 @@ export async function fetchDashboardKPIs(
   const { data: budgets } = await supabase
     .from('budgets')
     .select('planned_amount')
-    .eq('year', year);
+    .eq('year', year)
+    .eq('month', month);
   const totalBudget = (budgets ?? []).reduce((s, b) => s + Number(b.planned_amount), 0);
 
   const receitaAcumulada = current.receita;

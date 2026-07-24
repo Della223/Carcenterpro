@@ -208,7 +208,7 @@ export function generateInsights(
     const actual = expenses
       .filter((e) => e.category_id === b.category_id)
       .reduce((s, e) => {
-        const insts = (e.installments ?? []).filter((i) => i.competence_year === b.year);
+        const insts = (e.installments ?? []).filter((i) => i.competence_year === b.year && i.competence_month === b.month);
         return s + insts.reduce((sum, i) => sum + Number(i.amount), 0);
       }, 0);
     if (actual > Number(b.planned_amount)) {
@@ -355,7 +355,7 @@ export async function fetchHomeData(month: number, year: number): Promise<HomeDa
     fetchRevenues({ startDate, endDate }),
     fetchExpenses({}),
     fetchMarketingPosts(),
-    fetchBudgets(year),
+    fetchBudgets(year, month),
   ]);
 
   const { receitaMesAnterior, despesaMesAnterior } = computeEquivalentPeriodBaseline(month, year, revenues, expenses);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Download, Pencil, Trash2, Target, TrendingUp, TrendingDown, DollarSign, Copy } from 'lucide-react';
+import { Plus, Download, Pencil, Trash2, Target, TrendingUp, TrendingDown, DollarSign, Copy, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ui/Toast';
 import Modal from '../components/ui/Modal';
@@ -9,16 +9,24 @@ import ErrorState from '../components/ui/ErrorState';
 import { KPISkeleton, TableSkeleton } from '../components/ui/Skeleton';
 import KPICard from '../components/ui/KPICard';
 import Badge from '../components/ui/Badge';
-import { fetchBudgets, createBudget, updateBudget, deleteBudget, duplicateBudgetsFromYear } from '../services/budget.service';
+import {
+  fetchBudgets, createBudget, updateBudget, deleteBudget, duplicateBudgetsFromYear,
+  applyAutomaticBudgets, revertBudgetToAutomatic,
+} from '../services/budget.service';
 import { fetchExpenseCategories, fetchExpenses } from '../services/expense.service';
 import { createAuditLog } from '../services/audit.service';
 import { formatCurrency, formatPercent, calculateBudgetExecution, getCurrentCompetence, downloadCSV } from '../utils/format';
 import type { Budget, ExpenseCategory, Expense } from '../types';
 
+const MONTH_NAMES = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+];
+
 export default function OrcamentosScreen() {
   const { user } = useAuth();
   const toast = useToast();
-  const { year: currentYear } = getCurrentCompetence();
+  const { month: currentMonth, year: currentYear } = getCurrentCompetence();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -27,10 +35,11 @@ export default function OrcamentosScreen() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
   const [filterYear, setFilterYear] = useState(currentYear);
+  const [filterMonth, setFilterMonth] = useState(currentMonth);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
-  const [form, setForm] = useState({ year: currentYear, category_id: '', planned_amount: '' });
+  const [form, setForm] = useState({ year: currentYear, month: currentMonth, category_id: '', planned_amount: '' });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -45,10 +54,13 @@ export default function OrcamentosScreen() {
     setLoading(true);
     setError(false);
     try {
+      if (filterYear === currentYear && filterMonth === currentMonth) {
+        await applyAutomaticBudgets(filterYear, filterMonth, user?.id ?? undefined);
+      }
       const [budgetsData, catsData, expsData] = await Promise.all([
-        fetchBudgets(filterYear),
+        fetchBudgets(filterYear, filterMonth),
         fetchExpenseCategories(),
-        fetchExpenses({ competenceYear: filterYear }),
+        fetchExpenses({ competenceYear: filterYear, competenceMonth: filterMonth }),
       ]);
       setBudgets(budgetsData);
       setCategories(catsData);
@@ -58,7 +70,7 @@ export default function OrcamentosScreen() {
     } finally {
       setLoading(false);
     }
-  }, [filterYear]);
+  }, [filterYear, filterMonth, currentYear, currentMonth, user?.id]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -67,13 +79,13 @@ export default function OrcamentosScreen() {
       const actual = expenses
         .filter((e) => e.category_id === budget.category_id)
         .reduce((sum, e) => {
-          const insts = (e.installments ?? []).filter((i) => i.competence_year === filterYear);
+          const insts = (e.installments ?? []).filter((i) => i.competence_year === filterYear && i.competence_month === filterMonth);
           return sum + insts.reduce((s, i) => s + Number(i.amount), 0);
         }, 0);
       const exec = calculateBudgetExecution(Number(budget.planned_amount), actual);
       return { ...budget, actual, ...exec };
     });
-  }, [budgets, expenses, filterYear]);
+  }, [budgets, expenses, filterYear, filterMonth]);
 
   const kpis = useMemo(() => {
     const totalPlanned = budgetExecutions.reduce((s, b) => s + Number(b.planned_amount), 0);
@@ -85,14 +97,14 @@ export default function OrcamentosScreen() {
 
   const handleOpenNew = () => {
     setEditingBudget(null);
-    setForm({ year: filterYear, category_id: '', planned_amount: '' });
+    setForm({ year: filterYear, month: filterMonth, category_id: '', planned_amount: '' });
     setFormErrors({});
     setModalOpen(true);
   };
 
   const handleOpenEdit = (budget: Budget) => {
     setEditingBudget(budget);
-    setForm({ year: budget.year, category_id: budget.category_id, planned_amount: String(budget.planned_amount) });
+    setForm({ year: budget.year, month: budget.month, category_id: budget.category_id, planned_amount: String(budget.planned_amount) });
     setFormErrors({});
     setModalOpen(true);
   };
@@ -100,11 +112,12 @@ export default function OrcamentosScreen() {
   const validateForm = () => {
     const errors: Record<string, string> = {};
     if (!form.year || form.year < 2000 || form.year > 2100) errors.year = 'Ano inválido.';
+    if (!form.month || form.month < 1 || form.month > 12) errors.month = 'Mês inválido.';
     if (!form.category_id) errors.category_id = 'Categoria é obrigatória.';
     if (!form.planned_amount || Number(form.planned_amount) <= 0) errors.planned_amount = 'Valor deve ser maior que zero.';
     if (!editingBudget) {
-      const exists = budgets.find((b) => b.category_id === form.category_id && b.year === form.year);
-      if (exists) errors.category_id = 'Já existe orçamento para esta categoria neste exercício.';
+      const exists = budgets.find((b) => b.category_id === form.category_id && b.year === form.year && b.month === form.month);
+      if (exists) errors.category_id = 'Já existe orçamento para esta categoria neste mês/exercício.';
     }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -120,8 +133,8 @@ export default function OrcamentosScreen() {
         await createAuditLog(auditUser, 'orcamentos', 'update', editingBudget.id, null, { planned_amount: Number(form.planned_amount) });
         toast.success('Orçamento atualizado com sucesso.');
       } else {
-        const created = await createBudget({ year: form.year, category_id: form.category_id, planned_amount: Number(form.planned_amount), created_by: auditUser ?? undefined });
-        await createAuditLog(auditUser, 'orcamentos', 'create', created.id, null, { year: form.year, category_id: form.category_id, planned_amount: Number(form.planned_amount) });
+        const created = await createBudget({ year: form.year, month: form.month, category_id: form.category_id, planned_amount: Number(form.planned_amount), created_by: auditUser ?? undefined });
+        await createAuditLog(auditUser, 'orcamentos', 'create', created.id, null, { year: form.year, month: form.month, category_id: form.category_id, planned_amount: Number(form.planned_amount) });
         toast.success('Orçamento salvo com sucesso.');
       }
       setModalOpen(false);
@@ -145,6 +158,21 @@ export default function OrcamentosScreen() {
       toast.error('Não foi possível excluir o orçamento.');
     } finally {
       setDeleteTarget(null);
+    }
+  };
+
+  const handleRevertToAutomatic = async (budget: Budget) => {
+    try {
+      const { applied } = await revertBudgetToAutomatic(budget.id, budget.category_id, budget.month, budget.year);
+      await createAuditLog(user?.id ?? null, 'orcamentos', 'revert_to_automatic', budget.id, { origin: 'manual' }, { origin: 'automatico' });
+      if (applied) {
+        toast.success('Orçamento voltou a ser automático e foi recalculado.');
+      } else {
+        toast.warning('Orçamento marcado como automático, mas ainda não há histórico suficiente para recalcular o valor.');
+      }
+      await loadData();
+    } catch {
+      toast.error('Não foi possível voltar o orçamento para automático.');
     }
   };
 
@@ -175,7 +203,7 @@ export default function OrcamentosScreen() {
       formatCurrency(b.difference),
       formatPercent(b.executionPercent),
     ]);
-    downloadCSV(`orcamentos_${filterYear}.csv`, headers, rows);
+    downloadCSV(`orcamentos_${filterYear}_${String(filterMonth).padStart(2, '0')}.csv`, headers, rows);
     toast.success('Exportação concluída com sucesso.');
   };
 
@@ -186,6 +214,12 @@ export default function OrcamentosScreen() {
       {/* Filters */}
       <div className="card p-4">
         <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs font-medium text-ink-500 mb-1">Mês</label>
+            <select value={filterMonth} onChange={(e) => setFilterMonth(Number(e.target.value))} className="input-field">
+              {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
+            </select>
+          </div>
           <div>
             <label className="block text-xs font-medium text-ink-500 mb-1">Exercício</label>
             <select value={filterYear} onChange={(e) => setFilterYear(Number(e.target.value))} className="input-field">
@@ -220,7 +254,7 @@ export default function OrcamentosScreen() {
 
       {/* Table */}
       {loading ? <TableSkeleton rows={6} /> : error ? <ErrorState onRetry={loadData} /> : budgetExecutions.length === 0 ? (
-        <EmptyState title="Nenhum orçamento cadastrado." description="Crie o primeiro orçamento para o exercício selecionado." actionLabel="Criar primeiro orçamento" onAction={handleOpenNew} />
+        <EmptyState title="Nenhum orçamento cadastrado." description="Crie o primeiro orçamento para o mês/exercício selecionado." actionLabel="Criar primeiro orçamento" onAction={handleOpenNew} />
       ) : (
         <div className="overflow-hidden rounded-lg ring-1 ring-ink-200 bg-white">
           <div className="overflow-x-auto">
@@ -238,7 +272,14 @@ export default function OrcamentosScreen() {
               <tbody className="divide-y divide-ink-100">
                 {budgetExecutions.map((b) => (
                   <tr key={b.id} className={`hover:bg-ink-50/50 transition-colors ${b.executionPercent > 100 ? 'bg-error-50/30' : b.executionPercent > 90 ? 'bg-warning-50/30' : ''}`}>
-                    <td className="px-4 py-3 text-sm font-medium text-ink-900">{b.category?.name ?? '-'}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-ink-900">
+                      {b.category?.name ?? '-'}
+                      <span className="block mt-1">
+                        <Badge variant={b.origin === 'automatico' ? 'info' : 'neutral'}>
+                          {b.origin === 'automatico' ? 'Automático' : 'Manual'}
+                        </Badge>
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-sm text-ink-700 text-right whitespace-nowrap">{formatCurrency(Number(b.planned_amount))}</td>
                     <td className="px-4 py-3 text-sm text-ink-700 text-right whitespace-nowrap">{formatCurrency(b.actual)}</td>
                     <td className={`px-4 py-3 text-sm text-right whitespace-nowrap font-medium ${b.difference > 0 ? 'text-error-600' : 'text-success-600'}`}>
@@ -251,6 +292,11 @@ export default function OrcamentosScreen() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        {b.origin === 'manual' && (
+                          <button onClick={() => handleRevertToAutomatic(b)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Voltar para automático">
+                            <RefreshCw className="h-4 w-4" />
+                          </button>
+                        )}
                         <button onClick={() => handleOpenEdit(b)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Editar">
                           <Pencil className="h-4 w-4" />
                         </button>
@@ -281,10 +327,19 @@ export default function OrcamentosScreen() {
         }
       >
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-ink-700 mb-1.5">Exercício *</label>
-            <input type="number" min={2000} max={2100} value={form.year} onChange={(e) => setForm({ ...form, year: Number(e.target.value) })} className="input-field" disabled={!!editingBudget} />
-            {formErrors.year && <p className="mt-1 text-xs text-error-600">{formErrors.year}</p>}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Mês *</label>
+              <select value={form.month} onChange={(e) => setForm({ ...form, month: Number(e.target.value) })} className="input-field" disabled={!!editingBudget}>
+                {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
+              </select>
+              {formErrors.month && <p className="mt-1 text-xs text-error-600">{formErrors.month}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Exercício *</label>
+              <input type="number" min={2000} max={2100} value={form.year} onChange={(e) => setForm({ ...form, year: Number(e.target.value) })} className="input-field" disabled={!!editingBudget} />
+              {formErrors.year && <p className="mt-1 text-xs text-error-600">{formErrors.year}</p>}
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-ink-700 mb-1.5">Categoria *</label>
