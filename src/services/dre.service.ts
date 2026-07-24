@@ -17,9 +17,9 @@ export async function fetchDRE(
       .lte('revenue_date', endDate),
     supabase
       .from('expenses')
-      .select('category:expense_categories(name), subcategory:expense_subcategories(name), cost_center:cost_centers(name), installments:expense_installments(competence_month, competence_year, amount)')
-      .eq('competence_month', competenceMonth)
-      .eq('competence_year', competenceYear)
+      .select('category:expense_categories(name), subcategory:expense_subcategories(name), cost_center:cost_centers(name), installments:expense_installments!inner(competence_month, competence_year, amount)')
+      .eq('installments.competence_month', competenceMonth)
+      .eq('installments.competence_year', competenceYear)
       .neq('confirmation_status', 'pending_confirmation'),
   ]);
 

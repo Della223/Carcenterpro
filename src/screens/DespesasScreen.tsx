@@ -56,12 +56,14 @@ function getDefaultFilters(): FilterState {
   };
 }
 
-function getDefaultDateRange(month: string, year: string): { start: string; end: string } {
-  const m = Number(month);
-  const y = Number(year);
-  const start = `${y}-${String(m).padStart(2, '0')}-01`;
-  const end = new Date().toISOString().split('T')[0];
-  return { start, end };
+function getCompetenceMatch(expense: Expense, month: number, year: number): { amount: number; dueDate: string | null } {
+  const matches = (expense.installments ?? []).filter(
+    (i) => i.competence_month === month && i.competence_year === year
+  );
+  if (matches.length === 0) return { amount: 0, dueDate: null };
+  const amount = matches.reduce((s, i) => s + Number(i.amount), 0);
+  const dueDate = matches.map((i) => i.due_date).sort()[0];
+  return { amount, dueDate };
 }
 
 interface ExpenseForm {
@@ -153,13 +155,6 @@ export default function DespesasScreen() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
   }, [filters]);
-
-  // Update date range when competence changes
-  useEffect(() => {
-    const { start, end } = getDefaultDateRange(filters.competenceMonth, filters.competenceYear);
-    setDateStart(start);
-    setDateEnd(end);
-  }, [filters.competenceMonth, filters.competenceYear]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -272,11 +267,14 @@ export default function DespesasScreen() {
   };
 
   const filteredExpenses = useMemo(() => {
+    const compMonth = Number(filters.competenceMonth);
+    const compYear = Number(filters.competenceYear);
     return expenses.filter((e) => {
       if (filters.categoryId && e.category_id !== filters.categoryId) return false;
       if (filters.costCenterId && e.cost_center_id !== filters.costCenterId) return false;
       if (dateStart && e.payment_date && e.payment_date < dateStart) return false;
       if (dateEnd && e.payment_date && e.payment_date > dateEnd) return false;
+      if (!(e.installments ?? []).some((i) => i.competence_month === compMonth && i.competence_year === compYear)) return false;
       if (filters.searchText) {
         const search = filters.searchText.toLowerCase();
         if (!e.supplier?.toLowerCase().includes(search) && !e.description?.toLowerCase().includes(search)) return false;
@@ -617,27 +615,30 @@ export default function DespesasScreen() {
   };
 
   const handleExport = () => {
-    const headers = ['Competência', 'Fornecedor', 'Centro de Custo', 'Categoria', 'Subcategoria', 'Valor Total', 'Parcelas', 'Data Pagamento'];
-    const rows = filteredExpenses.map((e) => [
-      getCompetenceString(e.competence_month, e.competence_year),
-      e.supplier ?? '-',
-      e.cost_center?.name ?? '-',
-      e.category?.name ?? '-',
-      e.subcategory?.name ?? '-',
-      formatCurrency(Number(e.total_amount)),
-      `${e.installment_count}x`,
-      e.payment_date ? formatDate(e.payment_date) : '-',
-    ]);
+    const compMonth = Number(filters.competenceMonth);
+    const compYear = Number(filters.competenceYear);
+    const headers = ['Competência', 'Fornecedor', 'Centro de Custo', 'Categoria', 'Subcategoria', 'Valor na Competência', 'Parcelas', 'Vencimento'];
+    const rows = filteredExpenses.map((e) => {
+      const { amount: competenceAmount, dueDate: competenceDueDate } = getCompetenceMatch(e, compMonth, compYear);
+      return [
+        getCompetenceString(compMonth, compYear),
+        e.supplier ?? '-',
+        e.cost_center?.name ?? '-',
+        e.category?.name ?? '-',
+        e.subcategory?.name ?? '-',
+        formatCurrency(competenceAmount),
+        `${e.installment_count}x`,
+        competenceDueDate ? formatDate(competenceDueDate) : '-',
+      ];
+    });
     downloadCSV('despesas.csv', headers, rows);
     toast.success('Exportação concluída com sucesso.');
   };
 
   const handleClearFilters = () => {
-    const defaults = getDefaultFilters();
-    setFilters(defaults);
-    const { start, end } = getDefaultDateRange(defaults.competenceMonth, defaults.competenceYear);
-    setDateStart(start);
-    setDateEnd(end);
+    setFilters(getDefaultFilters());
+    setDateStart('');
+    setDateEnd('');
   };
 
   const fieldLabels: Record<string, string> = {
@@ -688,11 +689,11 @@ export default function DespesasScreen() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-ink-500 mb-1">Data Inicial</label>
+            <label className="block text-xs font-medium text-ink-500 mb-1" title="Filtra pela data real da compra (payment_date), de forma independente da competência selecionada.">Data Inicial (opcional)</label>
             <input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="input-field" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-ink-500 mb-1">Data Final</label>
+            <label className="block text-xs font-medium text-ink-500 mb-1" title="Filtra pela data real da compra (payment_date), de forma independente da competência selecionada.">Data Final (opcional)</label>
             <input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="input-field" />
           </div>
           <div className="flex-1 min-w-[180px]">
@@ -742,9 +743,9 @@ export default function DespesasScreen() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Fornecedor</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Centro de Custo</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Categoria</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-ink-500 uppercase tracking-wider">Valor Total</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-ink-500 uppercase tracking-wider">Valor na Competência</th>
                   <th className="px-4 py-3 text-center text-xs font-semibold text-ink-500 uppercase tracking-wider">Parcelas</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Data Pagamento</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Vencimento</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-ink-500 uppercase tracking-wider">Ações</th>
                 </tr>
               </thead>
@@ -752,9 +753,12 @@ export default function DespesasScreen() {
                 {filteredExpenses.map((e) => {
                   const isPending = e.confirmation_status === 'pending_confirmation';
                   const isOverdue = isPending && !!e.payment_date && e.payment_date < new Date().toISOString().split('T')[0];
+                  const compMonth = Number(filters.competenceMonth);
+                  const compYear = Number(filters.competenceYear);
+                  const { amount: competenceAmount, dueDate: competenceDueDate } = getCompetenceMatch(e, compMonth, compYear);
                   return (
                   <tr key={e.id} className="hover:bg-ink-50/50 transition-colors">
-                    <td className="px-4 py-3 text-sm text-ink-700 whitespace-nowrap">{getCompetenceString(e.competence_month, e.competence_year)}</td>
+                    <td className="px-4 py-3 text-sm text-ink-700 whitespace-nowrap">{getCompetenceString(compMonth, compYear)}</td>
                     <td className="px-4 py-3 text-sm font-medium text-ink-900">
                       {e.supplier ?? '-'}
                       {e.recurring_expense_id && <Repeat className="inline-block ml-1.5 h-3 w-3 text-primary-500 align-text-top" />}
@@ -764,7 +768,7 @@ export default function DespesasScreen() {
                       {e.category?.name ?? '-'}
                       {e.subcategory && <span className="text-ink-400 text-xs block">{e.subcategory.name}</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm font-semibold text-ink-900 text-right whitespace-nowrap">{formatCurrency(Number(e.total_amount))}</td>
+                    <td className="px-4 py-3 text-sm font-semibold text-ink-900 text-right whitespace-nowrap">{formatCurrency(competenceAmount)}</td>
                     <td className="px-4 py-3 text-sm text-ink-600 text-center">
                       {e.installment_count}x
                       {isPending && (
@@ -773,7 +777,7 @@ export default function DespesasScreen() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm text-ink-600 whitespace-nowrap">{e.payment_date ? formatDate(e.payment_date) : '-'}</td>
+                    <td className="px-4 py-3 text-sm text-ink-600 whitespace-nowrap">{competenceDueDate ? formatDate(competenceDueDate) : '-'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => setViewTarget(e)} className="p-1.5 text-ink-500 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors" title="Visualizar">

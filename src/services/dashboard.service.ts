@@ -23,9 +23,9 @@ async function fetchMonthData(month: number, year: number) {
       .lte('revenue_date', endDate),
     supabase
       .from('expenses')
-      .select('*, installments:expense_installments(*)')
-      .eq('competence_month', month)
-      .eq('competence_year', year)
+      .select('*, installments:expense_installments!inner(*)')
+      .eq('installments.competence_month', month)
+      .eq('installments.competence_year', year)
       .neq('confirmation_status', 'pending_confirmation'),
   ]);
   if (revenuesResult.error) throw revenuesResult.error;
@@ -176,9 +176,9 @@ export async function fetchExpenseByCategory(
 ): Promise<{ name: string; value: number }[]> {
   const { data, error } = await supabase
     .from('expenses')
-    .select('category:expense_categories(name), installments:expense_installments(competence_month, competence_year, amount)')
-    .eq('competence_month', competenceMonth)
-    .eq('competence_year', competenceYear)
+    .select('category:expense_categories(name), installments:expense_installments!inner(competence_month, competence_year, amount)')
+    .eq('installments.competence_month', competenceMonth)
+    .eq('installments.competence_year', competenceYear)
     .neq('confirmation_status', 'pending_confirmation');
   if (error) throw error;
 
@@ -215,9 +215,9 @@ export async function fetchCostCenterDistribution(
 ): Promise<{ name: string; value: number }[]> {
   const { data, error } = await supabase
     .from('expenses')
-    .select('cost_center:cost_centers(name), installments:expense_installments(competence_month, competence_year, amount)')
-    .eq('competence_month', competenceMonth)
-    .eq('competence_year', competenceYear)
+    .select('cost_center:cost_centers(name), installments:expense_installments!inner(competence_month, competence_year, amount)')
+    .eq('installments.competence_month', competenceMonth)
+    .eq('installments.competence_year', competenceYear)
     .neq('confirmation_status', 'pending_confirmation');
   if (error) throw error;
 

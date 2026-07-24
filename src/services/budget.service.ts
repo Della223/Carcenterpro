@@ -104,8 +104,8 @@ export async function computeAutomaticBudgetSuggestions(month: number, year: num
 
   const { data, error } = await supabase
     .from('expenses')
-    .select('category_id, installments:expense_installments(competence_month, competence_year, amount)')
-    .in('competence_year', years)
+    .select('category_id, installments:expense_installments!inner(competence_month, competence_year, amount)')
+    .in('installments.competence_year', years)
     .neq('confirmation_status', 'pending_confirmation');
   if (error) throw error;
 

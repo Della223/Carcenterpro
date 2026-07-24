@@ -138,13 +138,19 @@ export async function fetchAllCostCenters(): Promise<CostCenter[]> {
 }
 
 export async function fetchExpenses(filters: ExpenseFilters = {}): Promise<Expense[]> {
+  // A parcelamento's competence lives on each installment, not on the parent
+  // expense — matching by month/year must join expense_installments (inner)
+  // and filter on its columns, instead of the parent's own competence_month/year.
+  const hasCompetenceFilter = !!(filters.competenceMonth || filters.competenceYear);
+  const installmentsJoin = hasCompetenceFilter ? 'expense_installments!inner(*)' : 'expense_installments(*)';
+
   let query = supabase
     .from('expenses')
-    .select('*, category:expense_categories(*), subcategory:expense_subcategories(*), cost_center:cost_centers(*), supplier_ref:suppliers(*), user:users(*), installments:expense_installments(*)')
+    .select(`*, category:expense_categories(*), subcategory:expense_subcategories(*), cost_center:cost_centers(*), supplier_ref:suppliers(*), user:users(*), installments:${installmentsJoin}`)
     .order('created_at', { ascending: false });
 
-  if (filters.competenceMonth) query = query.eq('competence_month', filters.competenceMonth);
-  if (filters.competenceYear) query = query.eq('competence_year', filters.competenceYear);
+  if (filters.competenceMonth) query = query.eq('installments.competence_month', filters.competenceMonth);
+  if (filters.competenceYear) query = query.eq('installments.competence_year', filters.competenceYear);
   if (filters.supplier) query = query.ilike('supplier', `%${filters.supplier}%`);
   if (filters.categoryId) query = query.eq('category_id', filters.categoryId);
   if (filters.subcategoryId) query = query.eq('subcategory_id', filters.subcategoryId);
@@ -154,6 +160,7 @@ export async function fetchExpenses(filters: ExpenseFilters = {}): Promise<Expen
   if (error) throw error;
 
   let result = data ?? [];
+
   if (filters.searchText) {
     const search = filters.searchText.toLowerCase();
     result = result.filter(
