@@ -130,6 +130,8 @@ export interface RecurringExpense {
   last_confirmed_amount: number;
   start_month: number;
   start_year: number;
+  last_generated_month: number;
+  last_generated_year: number;
   end_date: string | null;
   active: boolean;
   notes: string | null;

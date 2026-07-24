@@ -52,6 +52,8 @@ export async function createRecurringExpense(input: RecurringExpenseInput): Prom
       last_confirmed_amount: input.initial_amount,
       start_month: input.start_month,
       start_year: input.start_year,
+      last_generated_month: input.start_month,
+      last_generated_year: input.start_year,
       end_date: input.end_date ?? null,
       notes: input.notes ?? null,
       created_by: input.created_by ?? null,
@@ -102,19 +104,9 @@ async function generatePendingOccurrences(): Promise<number> {
   let generatedCount = 0;
 
   for (const rec of recurrences) {
-    const { data: lastExpense, error: lastError } = await supabase
-      .from('expenses')
-      .select('competence_month, competence_year')
-      .eq('recurring_expense_id', rec.id)
-      .order('competence_year', { ascending: false })
-      .order('competence_month', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (lastError) throw lastError;
-
-    let { month, year } = lastExpense
-      ? nextCompetence(lastExpense.competence_month, lastExpense.competence_year)
-      : { month: rec.start_month, year: rec.start_year };
+    let { month, year } = nextCompetence(rec.last_generated_month, rec.last_generated_year);
+    let cursorMonth = rec.last_generated_month;
+    let cursorYear = rec.last_generated_year;
 
     while (competenceLTE(month, year, curMonth, curYear)) {
       const dueDate = buildDueDate(month, year, rec.due_day);
@@ -156,7 +148,17 @@ async function generatePendingOccurrences(): Promise<number> {
       if (instError) throw instError;
 
       generatedCount++;
+      cursorMonth = month;
+      cursorYear = year;
       ({ month, year } = nextCompetence(month, year));
+    }
+
+    if (cursorMonth !== rec.last_generated_month || cursorYear !== rec.last_generated_year) {
+      const { error: cursorError } = await supabase
+        .from('recurring_expenses')
+        .update({ last_generated_month: cursorMonth, last_generated_year: cursorYear })
+        .eq('id', rec.id);
+      if (cursorError) throw cursorError;
     }
   }
 

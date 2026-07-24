@@ -1387,7 +1387,11 @@ export default function DespesasScreen() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Confirmar Exclusão"
-        message="Deseja realmente excluir esta despesa? Todas as parcelas vinculadas serão removidas."
+        message={
+          deleteTarget?.recurring_expense_id
+            ? 'Deseja realmente excluir esta ocorrência? Apenas este lançamento será removido — a recorrência continua ativa e o próximo mês será gerado normalmente. Para parar de gerar novos lançamentos, use "Encerrar Recorrência" nos detalhes da despesa.'
+            : 'Deseja realmente excluir esta despesa? Todas as parcelas vinculadas serão removidas.'
+        }
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
       />
