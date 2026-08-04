@@ -35,7 +35,9 @@ async function fetchMonthData(month: number, year: number) {
   const expenses = expensesResult.data ?? [];
 
   const receita = revenues.reduce((sum, r) => sum + Number(r.amount), 0);
-  const quantidadeVendas = revenues.reduce((sum, r) => sum + (r.quantity || 0), 0);
+  // Each `revenues` row is one sale (venda), regardless of how many items
+  // (subcategorias) it contains — "quantidade de vendas" counts sales, not items.
+  const quantidadeVendas = revenues.length;
 
   let despesa = 0;
   const categoryTotals: Record<string, number> = {};
@@ -158,15 +160,17 @@ export async function fetchRevenueBySubcategory(
   const { startDate, endDate } = getDateRange(competenceMonth, competenceYear);
   const { data, error } = await supabase
     .from('revenues')
-    .select('amount, subcategory:revenue_subcategories(name)')
+    .select('items:revenue_items(amount, subcategory:revenue_subcategories(name))')
     .gte('revenue_date', startDate)
     .lte('revenue_date', endDate);
   if (error) throw error;
 
   const grouped: Record<string, number> = {};
   for (const r of data ?? []) {
-    const subName = (r.subcategory as unknown as { name: string })?.name ?? 'Sem subcategoria';
-    grouped[subName] = (grouped[subName] || 0) + Number(r.amount);
+    for (const item of (r.items as unknown as { amount: number; subcategory: { name: string } | null }[]) ?? []) {
+      const subName = item.subcategory?.name ?? 'Sem subcategoria';
+      grouped[subName] = (grouped[subName] || 0) + Number(item.amount);
+    }
   }
   return Object.entries(grouped).map(([name, value]) => ({ name, value }));
 }

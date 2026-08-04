@@ -12,7 +12,7 @@ export async function fetchDRE(
   const [revenuesResult, expensesResult] = await Promise.all([
     supabase
       .from('revenues')
-      .select('amount, main_category:revenue_main_categories(name), subcategory:revenue_subcategories(name)')
+      .select('main_category:revenue_main_categories(name), items:revenue_items(amount, subcategory:revenue_subcategories(name))')
       .gte('revenue_date', startDate)
       .lte('revenue_date', endDate),
     supabase
@@ -35,13 +35,15 @@ export async function fetchDRE(
 
   for (const r of revenues) {
     const catName = (r.main_category as unknown as { name: string })?.name ?? 'Sem categoria';
-    const subName = (r.subcategory as unknown as { name: string })?.name ?? 'Sem subcategoria';
-    const amount = Number(r.amount);
-
     if (!receitaMap[catName]) receitaMap[catName] = { amount: 0, subcategories: {} };
-    receitaMap[catName].amount += amount;
-    receitaMap[catName].subcategories[subName] = (receitaMap[catName].subcategories[subName] || 0) + amount;
-    receitaBruta += amount;
+
+    for (const item of (r.items as unknown as { amount: number; subcategory: { name: string } | null }[]) ?? []) {
+      const subName = item.subcategory?.name ?? 'Sem subcategoria';
+      const amount = Number(item.amount);
+      receitaMap[catName].amount += amount;
+      receitaMap[catName].subcategories[subName] = (receitaMap[catName].subcategories[subName] || 0) + amount;
+      receitaBruta += amount;
+    }
   }
 
   const receitaPorCategoria = Object.entries(receitaMap).map(([category, data]) => ({

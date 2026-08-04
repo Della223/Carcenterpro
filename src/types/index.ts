@@ -32,6 +32,17 @@ export interface RevenueCategory {
   created_at: string;
 }
 
+export interface RevenueItem {
+  id: string;
+  revenue_id: string;
+  subcategory_id: string;
+  quantity: number;
+  amount: number;
+  created_at: string;
+  updated_at: string;
+  subcategory?: RevenueSubcategory | null;
+}
+
 export interface Revenue {
   id: string;
   revenue_date: string;
@@ -50,6 +61,7 @@ export interface Revenue {
   main_category?: RevenueMainCategory | null;
   subcategory?: RevenueSubcategory | null;
   user?: User | null;
+  items?: RevenueItem[];
 }
 
 export interface ExpenseCategory {

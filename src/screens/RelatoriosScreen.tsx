@@ -72,12 +72,15 @@ export default function RelatoriosScreen() {
         const data = await fetchRevenues({});
         title = `Relatório de Receitas — ${getCompetenceString(filterMonth, filterYear)}`;
         headers = ['Data', 'Categoria Principal', 'Subcategoria', 'Quantidade', 'Valor', 'Ticket Médio', 'Observações', 'Usuário'];
-        rows = data.map((r: Revenue) => [
-          formatDate(r.revenue_date), r.main_category?.name ?? '-', r.subcategory?.name ?? '-', r.quantity,
-          formatCurrency(Number(r.amount)),
-          r.quantity > 0 ? formatCurrency(Number(r.amount) / r.quantity) : '-',
-          r.notes ?? '-', r.user?.name ?? '-',
-        ]);
+        // Uma venda pode ter vários itens (subcategorias) — o relatório detalha por item.
+        rows = data.flatMap((r: Revenue) =>
+          (r.items ?? []).map((item) => [
+            formatDate(r.revenue_date), r.main_category?.name ?? '-', item.subcategory?.name ?? '-', item.quantity,
+            formatCurrency(Number(item.amount)),
+            item.quantity > 0 ? formatCurrency(Number(item.amount) / item.quantity) : '-',
+            r.notes ?? '-', r.user?.name ?? '-',
+          ])
+        );
       } else if (reportId === 'despesas') {
         const data = await fetchExpenses({});
         title = `Relatório de Despesas — ${getCompetenceString(filterMonth, filterYear)}`;
