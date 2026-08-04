@@ -294,6 +294,10 @@ export interface DashboardKPIs {
   variacaoReceita: number;
   variacaoDespesa: number;
   totalBudget: number;
+  /** false when the previous-period baseline is zero/unavailable — the variação above isn't meaningful. Only set by home.service.ts. */
+  receitaComparavel?: boolean;
+  despesaComparavel?: boolean;
+  resultadoComparavel?: boolean;
 }
 
 export interface DRESubItem {

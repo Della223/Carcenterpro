@@ -11,9 +11,13 @@ interface ExecutivePanelProps {
 }
 
 export default function ExecutivePanel({ kpis }: ExecutivePanelProps) {
-  const receitaTrend = kpis.variacaoReceita >= 0 ? 'up' : 'down';
-  const despesaTrend = kpis.variacaoDespesa <= 0 ? 'up' : 'down';
-  const resultadoTrend = kpis.variacaoResultado >= 0 ? 'up' : 'down';
+  const receitaComparavel = kpis.receitaComparavel !== false;
+  const despesaComparavel = kpis.despesaComparavel !== false;
+  const resultadoComparavel = kpis.resultadoComparavel !== false;
+
+  const receitaTrend = receitaComparavel ? (kpis.variacaoReceita >= 0 ? 'up' : 'down') : 'neutral';
+  const despesaTrend = despesaComparavel ? (kpis.variacaoDespesa <= 0 ? 'up' : 'down') : 'neutral';
+  const resultadoTrend = resultadoComparavel ? (kpis.variacaoResultado >= 0 ? 'up' : 'down') : 'neutral';
 
   return (
     <div className="space-y-4">
@@ -24,9 +28,9 @@ export default function ExecutivePanel({ kpis }: ExecutivePanelProps) {
           icon={DollarSign}
           iconColor="text-success-600"
           iconBg="bg-success-50"
-          comparison="vs mês anterior"
+          comparison={receitaComparavel ? 'vs mês anterior' : 'sem dados para comparar'}
           trend={receitaTrend}
-          trendValue={`${kpis.variacaoReceita >= 0 ? '+' : ''}${kpis.variacaoReceita.toFixed(1)}%`}
+          trendValue={receitaComparavel ? `${kpis.variacaoReceita >= 0 ? '+' : ''}${kpis.variacaoReceita.toFixed(1)}%` : ''}
         />
         <KPICard
           title="Despesas do Mês"
@@ -34,9 +38,9 @@ export default function ExecutivePanel({ kpis }: ExecutivePanelProps) {
           icon={TrendingDown}
           iconColor="text-error-600"
           iconBg="bg-error-50"
-          comparison="vs mês anterior"
+          comparison={despesaComparavel ? 'vs mês anterior' : 'sem dados para comparar'}
           trend={despesaTrend}
-          trendValue={`${kpis.variacaoDespesa >= 0 ? '+' : ''}${kpis.variacaoDespesa.toFixed(1)}%`}
+          trendValue={despesaComparavel ? `${kpis.variacaoDespesa >= 0 ? '+' : ''}${kpis.variacaoDespesa.toFixed(1)}%` : ''}
         />
         <KPICard
           title="Resultado Operacional"
@@ -44,9 +48,9 @@ export default function ExecutivePanel({ kpis }: ExecutivePanelProps) {
           icon={TrendingUp}
           iconColor={kpis.resultado >= 0 ? 'text-success-600' : 'text-error-600'}
           iconBg={kpis.resultado >= 0 ? 'bg-success-50' : 'bg-error-50'}
-          comparison="vs mês anterior"
+          comparison={resultadoComparavel ? 'vs mês anterior' : 'sem dados para comparar'}
           trend={resultadoTrend}
-          trendValue={`${kpis.variacaoResultado >= 0 ? '+' : ''}${kpis.variacaoResultado.toFixed(1)}%`}
+          trendValue={resultadoComparavel ? `${kpis.variacaoResultado >= 0 ? '+' : ''}${kpis.variacaoResultado.toFixed(1)}%` : ''}
         />
         <KPICard
           title="Projeção Fechamento"

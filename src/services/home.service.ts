@@ -2,7 +2,7 @@ import { fetchDashboardKPIs } from './dashboard.service';
 import { fetchRevenues } from './revenue.service';
 import { fetchExpenses } from './expense.service';
 import { fetchMarketingPosts } from './marketing.service';
-import { fetchBudgets } from './budget.service';
+import { fetchBudgets, applyAutomaticBudgets } from './budget.service';
 import type { CalendarDayInfo, HomeInsight, DashboardKPIs, Expense, Revenue, Budget, MarketingPost } from '../types';
 
 export interface HomeData {
@@ -350,6 +350,10 @@ export async function fetchHomeData(month: number, year: number): Promise<HomeDa
   const startDate = `${prevMonthDate.year}-${String(prevMonthDate.month).padStart(2, '0')}-01`;
   const endDate = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
 
+  // Must complete before fetchDashboardKPIs reads `budgets` below, so the
+  // automatic suggestion (if any) is already there on the first load of the month.
+  await applyAutomaticBudgets(year, month);
+
   const [kpisRaw, revenues, expenses, marketing, budgets] = await Promise.all([
     fetchDashboardKPIs(month, year),
     fetchRevenues({ startDate, endDate }),
@@ -360,9 +364,16 @@ export async function fetchHomeData(month: number, year: number): Promise<HomeDa
 
   const { receitaMesAnterior, despesaMesAnterior } = computeEquivalentPeriodBaseline(month, year, revenues, expenses);
   const resultadoMesAnterior = receitaMesAnterior - despesaMesAnterior;
-  const variacaoReceita = receitaMesAnterior > 0 ? ((kpisRaw.receitaAcumulada - receitaMesAnterior) / receitaMesAnterior) * 100 : 0;
-  const variacaoDespesa = despesaMesAnterior > 0 ? ((kpisRaw.despesaAcumulada - despesaMesAnterior) / despesaMesAnterior) * 100 : 0;
-  const variacaoResultado = resultadoMesAnterior !== 0 ? ((kpisRaw.resultado - resultadoMesAnterior) / Math.abs(resultadoMesAnterior)) * 100 : 0;
+
+  // A zero/unavailable baseline makes the percentage meaningless — flag it
+  // instead of computing a misleading "+0,0%".
+  const receitaComparavel = receitaMesAnterior > 0;
+  const despesaComparavel = despesaMesAnterior > 0;
+  const resultadoComparavel = resultadoMesAnterior !== 0;
+
+  const variacaoReceita = receitaComparavel ? ((kpisRaw.receitaAcumulada - receitaMesAnterior) / receitaMesAnterior) * 100 : 0;
+  const variacaoDespesa = despesaComparavel ? ((kpisRaw.despesaAcumulada - despesaMesAnterior) / despesaMesAnterior) * 100 : 0;
+  const variacaoResultado = resultadoComparavel ? ((kpisRaw.resultado - resultadoMesAnterior) / Math.abs(resultadoMesAnterior)) * 100 : 0;
 
   const kpis: DashboardKPIs = {
     ...kpisRaw,
@@ -372,6 +383,9 @@ export async function fetchHomeData(month: number, year: number): Promise<HomeDa
     variacaoReceita,
     variacaoDespesa,
     variacaoResultado,
+    receitaComparavel,
+    despesaComparavel,
+    resultadoComparavel,
   };
 
   const { calendar, consecutiveEmptyDays } = await fetchCalendarData(month, year, revenues, expenses);
