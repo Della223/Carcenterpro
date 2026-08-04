@@ -103,10 +103,17 @@ export default function RelatoriosScreen() {
           ...data.receitaPorCategoria.map((c) => [`  ${c.category}`, formatCurrency(c.amount)]),
           ['(-) Deduções', formatCurrency(data.deducoes)],
           ['(=) Receita Líquida', formatCurrency(data.receitaLiquida)],
+          ['(-) Custos Diretos (CPV + CSP)', formatCurrency(data.custosDiretos)],
+          ...data.custosDiretosPorCategoria.map((c) => [`  ${c.category}`, formatCurrency(c.amount)]),
+          ['(=) Lucro Bruto', formatCurrency(data.lucroBruto)],
           ['(-) Despesas Operacionais', formatCurrency(data.despesasOperacionais)],
           ...data.despesasPorCategoria.map((c) => [`  ${c.category}`, formatCurrency(c.amount)]),
           ['(=) Resultado Operacional', formatCurrency(data.resultadoOperacional)],
+          ['(-) IR/CSLL', formatCurrency(data.irCsll)],
+          ['(=) Resultado Líquido', formatCurrency(data.resultadoLiquido)],
+          ['Margem Bruta', `${data.margemBruta.toFixed(2)}%`],
           ['Margem Operacional', `${data.margemOperacional.toFixed(2)}%`],
+          ['Margem Líquida', `${data.margemLiquida.toFixed(2)}%`],
         ];
       } else if (reportId === 'orcamentos') {
         const data = await fetchBudgets(filterYear, filterMonth);

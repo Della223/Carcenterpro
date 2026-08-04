@@ -328,10 +328,21 @@ export interface DREData {
   receitaPorCategoria: DRERevenueCategoryGroup[];
   deducoes: number;
   receitaLiquida: number;
+  /** Centros de custo CPV e CSP — custo direto, deduzido antes do Lucro Bruto. */
+  custosDiretos: number;
+  custosDiretosPorCategoria: DREExpenseCostCenterGroup[];
+  lucroBruto: number;
+  /** Demais centros de custo, exceto CPV, CSP e IR/CSLL. */
   despesasOperacionais: number;
   despesasPorCategoria: DREExpenseCostCenterGroup[];
   resultadoOperacional: number;
+  /** Centro de custo IR/CSLL — imposto sobre o lucro, deduzido após o Resultado Operacional. */
+  irCsll: number;
+  irCsllPorCategoria: DREExpenseCostCenterGroup[];
+  resultadoLiquido: number;
+  margemBruta: number;
   margemOperacional: number;
+  margemLiquida: number;
 }
 
 export interface BudgetExecution {

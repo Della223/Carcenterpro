@@ -1,5 +1,50 @@
 import { supabase } from '../lib/supabase';
-import type { DREData } from '../types';
+import type { DREData, DREExpenseCostCenterGroup } from '../types';
+
+// CPV e CSP são custo direto (deduzido antes do Lucro Bruto, junto com a
+// Receita Líquida). IR/CSLL é imposto sobre o lucro (deduzido depois do
+// Resultado Operacional). Qualquer outro centro de custo — incluindo
+// "Deduções" e despesas sem centro de custo definido — permanece em
+// Despesas Operacionais.
+const DIRECT_COST_CENTERS = new Set(['CPV', 'CSP']);
+const TAX_COST_CENTER = 'IR/CSLL';
+
+type CostCenterBucket = 'direct' | 'tax' | 'operational';
+
+function classifyCostCenter(name: string): CostCenterBucket {
+  if (DIRECT_COST_CENTERS.has(name)) return 'direct';
+  if (name === TAX_COST_CENTER) return 'tax';
+  return 'operational';
+}
+
+type ExpenseMap = Record<string, {
+  amount: number;
+  categories: Record<string, { amount: number; subcategories: Record<string, number> }>;
+}>;
+
+function addExpense(map: ExpenseMap, ccName: string, catName: string, subName: string, amount: number): void {
+  if (!map[ccName]) map[ccName] = { amount: 0, categories: {} };
+  map[ccName].amount += amount;
+
+  if (!map[ccName].categories[catName]) {
+    map[ccName].categories[catName] = { amount: 0, subcategories: {} };
+  }
+  map[ccName].categories[catName].amount += amount;
+  map[ccName].categories[catName].subcategories[subName] =
+    (map[ccName].categories[catName].subcategories[subName] || 0) + amount;
+}
+
+function mapToGroups(map: ExpenseMap): DREExpenseCostCenterGroup[] {
+  return Object.entries(map).map(([costCenter, ccData]) => ({
+    category: costCenter,
+    amount: ccData.amount,
+    categories: Object.entries(ccData.categories).map(([category, catData]) => ({
+      category,
+      amount: catData.amount,
+      subcategories: Object.entries(catData.subcategories).map(([name, amount]) => ({ name, amount })),
+    })),
+  }));
+}
 
 export async function fetchDRE(
   competenceMonth: number,
@@ -55,59 +100,67 @@ export async function fetchDRE(
   const deducoes = 0;
   const receitaLiquida = receitaBruta - deducoes;
 
-  // ---- Despesas: Centro de Custo -> Categoria -> Subcategoria ----
-  const despesaMap: Record<string, {
-    amount: number;
-    categories: Record<string, { amount: number; subcategories: Record<string, number> }>;
-  }> = {};
+  // ---- Despesas: Centro de Custo -> Categoria -> Subcategoria, separadas por bucket ----
+  const directMap: ExpenseMap = {};
+  const operationalMap: ExpenseMap = {};
+  const taxMap: ExpenseMap = {};
+  let custosDiretos = 0;
   let despesasOperacionais = 0;
+  let irCsll = 0;
 
   for (const e of expenses) {
     const ccName = (e.cost_center as unknown as { name: string })?.name ?? 'Sem centro de custo';
     const catName = (e.category as unknown as { name: string })?.name ?? 'Sem categoria';
     const subName = (e.subcategory as unknown as { name: string })?.name ?? 'Sem subcategoria';
+    const bucket = classifyCostCenter(ccName);
 
     for (const inst of (e.installments as unknown as { competence_month: number; competence_year: number; amount: number }[]) ?? []) {
       if (inst.competence_month === competenceMonth && inst.competence_year === competenceYear) {
         const amount = Number(inst.amount);
 
-        if (!despesaMap[ccName]) despesaMap[ccName] = { amount: 0, categories: {} };
-        despesaMap[ccName].amount += amount;
-
-        if (!despesaMap[ccName].categories[catName]) {
-          despesaMap[ccName].categories[catName] = { amount: 0, subcategories: {} };
+        if (bucket === 'direct') {
+          addExpense(directMap, ccName, catName, subName, amount);
+          custosDiretos += amount;
+        } else if (bucket === 'tax') {
+          addExpense(taxMap, ccName, catName, subName, amount);
+          irCsll += amount;
+        } else {
+          addExpense(operationalMap, ccName, catName, subName, amount);
+          despesasOperacionais += amount;
         }
-        despesaMap[ccName].categories[catName].amount += amount;
-        despesaMap[ccName].categories[catName].subcategories[subName] =
-          (despesaMap[ccName].categories[catName].subcategories[subName] || 0) + amount;
-
-        despesasOperacionais += amount;
       }
     }
   }
 
-  const despesasPorCategoria = Object.entries(despesaMap).map(([costCenter, ccData]) => ({
-    category: costCenter,
-    amount: ccData.amount,
-    categories: Object.entries(ccData.categories).map(([category, catData]) => ({
-      category,
-      amount: catData.amount,
-      subcategories: Object.entries(catData.subcategories).map(([name, amount]) => ({ name, amount })),
-    })),
-  }));
+  const custosDiretosPorCategoria = mapToGroups(directMap);
+  const despesasPorCategoria = mapToGroups(operationalMap);
+  const irCsllPorCategoria = mapToGroups(taxMap);
 
-  const resultadoOperacional = receitaLiquida - despesasOperacionais;
+  const lucroBruto = receitaLiquida - custosDiretos;
+  const resultadoOperacional = lucroBruto - despesasOperacionais;
+  const resultadoLiquido = resultadoOperacional - irCsll;
+
+  const margemBruta = receitaLiquida > 0 ? (lucroBruto / receitaLiquida) * 100 : 0;
   const margemOperacional = receitaLiquida > 0 ? (resultadoOperacional / receitaLiquida) * 100 : 0;
+  const margemLiquida = receitaLiquida > 0 ? (resultadoLiquido / receitaLiquida) * 100 : 0;
 
   return {
     receitaBruta,
     receitaPorCategoria,
     deducoes,
     receitaLiquida,
+    custosDiretos,
+    custosDiretosPorCategoria,
+    lucroBruto,
     despesasOperacionais,
     despesasPorCategoria,
     resultadoOperacional,
+    irCsll,
+    irCsllPorCategoria,
+    resultadoLiquido,
+    margemBruta,
     margemOperacional,
+    margemLiquida,
   };
 }
 
