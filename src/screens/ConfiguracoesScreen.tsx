@@ -11,23 +11,29 @@ import Badge from '../components/ui/Badge';
 import { createAuditLog } from '../services/audit.service';
 import { formatDate } from '../utils/format';
 import {
-  fetchAllRevenueCategories, createRevenueCategory, updateRevenueCategory, deleteRevenueCategory,
+  updateRevenueMainCategory, deleteRevenueMainCategory, checkRevenueMainCategoryInUse,
+  updateRevenueSubcategory, deleteRevenueSubcategory, checkRevenueSubcategoryInUse,
   createExpenseCategory, updateExpenseCategory, deleteExpenseCategory,
   createSubcategory, updateSubcategory, deleteSubcategory,
   createCostCenter, updateCostCenter, deleteCostCenter,
-  checkCategoryInUse, checkCostCenterInUse,
+  checkExpenseCategoryInUse, checkCostCenterInUse,
   createSupplierRecord, updateSupplierRecord, deleteSupplierRecord, checkSupplierInUse,
 } from '../services/settings.service';
+import {
+  createRevenueMainCategory, fetchAllRevenueMainCategories,
+  createRevenueSubcategory, fetchAllRevenueSubcategories,
+} from '../services/revenue.service';
 import { fetchAllExpenseCategories, fetchAllSubcategories, fetchAllCostCenters, fetchAllSuppliers } from '../services/expense.service';
 import { fetchInstagramIntegration, disconnectInstagram, getInstagramAuthUrl, syncInstagram } from '../services/marketing.service';
-import type { RevenueCategory, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, InstagramIntegration } from '../types';
+import type { RevenueMainCategory, RevenueSubcategory, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier, InstagramIntegration } from '../types';
 
-type TabId = 'receita-categorias' | 'despesa-categorias' | 'subcategorias' | 'centros-custo' | 'fornecedores' | 'competencia' | 'marketing' | 'integracoes' | 'sistema';
+type TabId = 'receita-categorias' | 'receita-subcategorias' | 'despesa-categorias' | 'subcategorias' | 'centros-custo' | 'fornecedores' | 'competencia' | 'marketing' | 'integracoes' | 'sistema';
 
 const TABS: { id: TabId; label: string; icon: typeof Tag }[] = [
-  { id: 'receita-categorias', label: 'Categorias de Receita', icon: Tag },
+  { id: 'receita-categorias', label: 'Categoria Principal (Receita)', icon: Tag },
+  { id: 'receita-subcategorias', label: 'Subcategoria (Receita)', icon: Layers },
   { id: 'despesa-categorias', label: 'Categorias de Despesa', icon: Tag },
-  { id: 'subcategorias', label: 'Subcategorias', icon: Layers },
+  { id: 'subcategorias', label: 'Subcategoria (Despesa)', icon: Layers },
   { id: 'centros-custo', label: 'Centros de Custo', icon: Building2 },
   { id: 'fornecedores', label: 'Fornecedores', icon: Truck },
   { id: 'competencia', label: 'Competência', icon: Calendar },
@@ -54,7 +60,8 @@ export default function ConfiguracoesScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const [revenueCategories, setRevenueCategories] = useState<RevenueCategory[]>([]);
+  const [revenueMainCategories, setRevenueMainCategories] = useState<RevenueMainCategory[]>([]);
+  const [revenueSubcategories, setRevenueSubcategories] = useState<RevenueSubcategory[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([]);
   const [subcategories, setSubcategories] = useState<ExpenseSubcategory[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
@@ -76,15 +83,17 @@ export default function ConfiguracoesScreen() {
     setLoading(true);
     setError(false);
     try {
-      const [revCats, expCats, subs, ccs, sups, integ] = await Promise.all([
-        fetchAllRevenueCategories(),
+      const [revMainCats, revSubs, expCats, subs, ccs, sups, integ] = await Promise.all([
+        fetchAllRevenueMainCategories(),
+        fetchAllRevenueSubcategories(),
         fetchAllExpenseCategories(),
         fetchAllSubcategories(),
         fetchAllCostCenters(),
         fetchAllSuppliers(),
         fetchInstagramIntegration(),
       ]);
-      setRevenueCategories(revCats);
+      setRevenueMainCategories(revMainCats);
+      setRevenueSubcategories(revSubs);
       setExpenseCategories(expCats);
       setSubcategories(subs);
       setCostCenters(ccs);
@@ -146,13 +155,28 @@ export default function ConfiguracoesScreen() {
       const auditUser = user?.id ?? null;
       if (activeTab === 'receita-categorias') {
         if (editingItem) {
-          await updateRevenueCategory(editingItem.id, { name: formName.trim() });
+          await updateRevenueMainCategory(editingItem.id, { name: formName.trim() });
           await createAuditLog(auditUser, 'configuracoes', 'update', editingItem.id, null, { name: formName.trim() });
           toast.success('Categoria atualizada com sucesso.');
         } else {
-          await createRevenueCategory(formName.trim());
+          await createRevenueMainCategory(formName.trim());
           await createAuditLog(auditUser, 'configuracoes', 'create', undefined, null, { name: formName.trim() });
           toast.success('Categoria criada com sucesso.');
+        }
+      } else if (activeTab === 'receita-subcategorias') {
+        if (!formParentCategory) {
+          toast.error('Selecione a categoria pai.');
+          setSaving(false);
+          return;
+        }
+        if (editingItem) {
+          await updateRevenueSubcategory(editingItem.id, { name: formName.trim() });
+          await createAuditLog(auditUser, 'configuracoes', 'update', editingItem.id, null, { name: formName.trim() });
+          toast.success('Subcategoria atualizada com sucesso.');
+        } else {
+          await createRevenueSubcategory(formParentCategory, formName.trim());
+          await createAuditLog(auditUser, 'configuracoes', 'create', undefined, null, { name: formName.trim() });
+          toast.success('Subcategoria criada com sucesso.');
         }
       } else if (activeTab === 'despesa-categorias') {
         if (editingItem) {
@@ -213,8 +237,11 @@ export default function ConfiguracoesScreen() {
   const handleToggleActive = async (id: string, active: boolean, type: string) => {
     try {
       const auditUser = user?.id ?? null;
-      if (type === 'receita') {
-        await updateRevenueCategory(id, { active: !active });
+      if (type === 'receita-principal') {
+        await updateRevenueMainCategory(id, { active: !active });
+        await createAuditLog(auditUser, 'configuracoes', 'update', id, { active }, { active: !active });
+      } else if (type === 'receita-subcategoria') {
+        await updateRevenueSubcategory(id, { active: !active });
         await createAuditLog(auditUser, 'configuracoes', 'update', id, { active }, { active: !active });
       } else if (type === 'despesa') {
         await updateExpenseCategory(id, { active: !active });
@@ -240,12 +267,16 @@ export default function ConfiguracoesScreen() {
     if (!deleteTarget) return;
     try {
       const auditUser = user?.id ?? null;
-      if (deleteTarget.type === 'receita') {
-        const inUse = await checkCategoryInUse('revenues', deleteTarget.id);
-        if (inUse) { toast.error('Não é possível excluir uma categoria vinculada a registros.'); return; }
-        await deleteRevenueCategory(deleteTarget.id);
+      if (deleteTarget.type === 'receita-principal') {
+        const inUse = await checkRevenueMainCategoryInUse(deleteTarget.id);
+        if (inUse) { toast.error('Não é possível excluir uma categoria vinculada a vendas.'); return; }
+        await deleteRevenueMainCategory(deleteTarget.id);
+      } else if (deleteTarget.type === 'receita-subcategoria') {
+        const inUse = await checkRevenueSubcategoryInUse(deleteTarget.id);
+        if (inUse) { toast.error('Não é possível excluir uma subcategoria vinculada a vendas.'); return; }
+        await deleteRevenueSubcategory(deleteTarget.id);
       } else if (deleteTarget.type === 'despesa') {
-        const inUse = await checkCategoryInUse('expenses', deleteTarget.id);
+        const inUse = await checkExpenseCategoryInUse(deleteTarget.id);
         if (inUse) { toast.error('Não é possível excluir uma categoria vinculada a registros.'); return; }
         await deleteExpenseCategory(deleteTarget.id);
       } else if (deleteTarget.type === 'subcategoria') {
@@ -276,7 +307,12 @@ export default function ConfiguracoesScreen() {
     let items: TableItem[] = [];
 
     if (activeTab === 'receita-categorias') {
-      items = revenueCategories.map(c => ({ id: c.id, name: c.name, active: c.active, type: 'receita' }));
+      items = revenueMainCategories.map(c => ({ id: c.id, name: c.name, active: c.active, type: 'receita-principal' }));
+    } else if (activeTab === 'receita-subcategorias') {
+      items = revenueSubcategories.map(s => ({
+        id: s.id, name: s.name, active: s.active, type: 'receita-subcategoria',
+        parentCategoryId: s.main_category_id, parentName: s.main_category?.name ?? '-',
+      }));
     } else if (activeTab === 'despesa-categorias') {
       items = expenseCategories.map(c => ({
         id: c.id, name: c.name, active: c.active, type: 'despesa',
@@ -296,6 +332,7 @@ export default function ConfiguracoesScreen() {
     if (items.length === 0) {
       const labels: Record<string, string> = {
         'receita-categorias': 'Nenhuma categoria de receita encontrada.',
+        'receita-subcategorias': 'Nenhuma subcategoria de receita encontrada.',
         'despesa-categorias': 'Nenhuma categoria de despesa encontrada.',
         'subcategorias': 'Nenhuma subcategoria encontrada.',
         'centros-custo': 'Nenhum centro de custo encontrado.',
@@ -311,7 +348,7 @@ export default function ConfiguracoesScreen() {
             <thead className="bg-ink-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Nome</th>
-                {activeTab === 'subcategorias' && <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Categoria Pai</th>}
+                {(activeTab === 'subcategorias' || activeTab === 'receita-subcategorias') && <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Categoria Pai</th>}
                 {activeTab === 'despesa-categorias' && <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Centro de Custo</th>}
                 <th className="px-4 py-3 text-left text-xs font-semibold text-ink-500 uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-ink-500 uppercase tracking-wider">Ações</th>
@@ -321,7 +358,7 @@ export default function ConfiguracoesScreen() {
               {items.map((item) => (
                 <tr key={item.id} className="hover:bg-ink-50/50 transition-colors">
                   <td className="px-4 py-3 text-sm font-medium text-ink-900">{item.name}</td>
-                  {activeTab === 'subcategorias' && <td className="px-4 py-3 text-sm text-ink-600">{item.parentName}</td>}
+                  {(activeTab === 'subcategorias' || activeTab === 'receita-subcategorias') && <td className="px-4 py-3 text-sm text-ink-600">{item.parentName}</td>}
                   {activeTab === 'despesa-categorias' && <td className="px-4 py-3 text-sm text-ink-600">{item.costCenterName}</td>}
                   <td className="px-4 py-3">
                     <Badge variant={item.active ? 'success' : 'neutral'}>{item.active ? 'Ativa' : 'Inativa'}</Badge>
@@ -616,7 +653,7 @@ export default function ConfiguracoesScreen() {
     </div>
   );
 
-  const showNewButton = activeTab === 'receita-categorias' || activeTab === 'despesa-categorias' || activeTab === 'subcategorias' || activeTab === 'centros-custo' || activeTab === 'fornecedores';
+  const showNewButton = activeTab === 'receita-categorias' || activeTab === 'receita-subcategorias' || activeTab === 'despesa-categorias' || activeTab === 'subcategorias' || activeTab === 'centros-custo' || activeTab === 'fornecedores';
   const modalTitle = editingItem ? 'Editar Registro' : 'Novo Registro';
 
   return (
@@ -682,6 +719,22 @@ export default function ConfiguracoesScreen() {
               >
                 <option value="">Selecione...</option>
                 {expenseCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {activeTab === 'receita-subcategorias' && (
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1.5">Categoria Principal *</label>
+              <select
+                value={formParentCategory}
+                onChange={(e) => setFormParentCategory(e.target.value)}
+                className="input-field"
+                disabled={!!editingItem}
+              >
+                <option value="">Selecione...</option>
+                {revenueMainCategories.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>

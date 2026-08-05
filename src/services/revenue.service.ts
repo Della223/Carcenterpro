@@ -69,6 +69,16 @@ export async function createRevenueMainCategory(name: string): Promise<RevenueMa
   return data;
 }
 
+/** Admin listing — includes inactive, unlike fetchRevenueMainCategories (used for dropdowns). */
+export async function fetchAllRevenueMainCategories(): Promise<RevenueMainCategory[]> {
+  const { data, error } = await supabase
+    .from('revenue_main_categories')
+    .select('*')
+    .order('name');
+  if (error) throw error;
+  return data ?? [];
+}
+
 // ============================================================
 // Subcategories
 // ============================================================
@@ -93,6 +103,16 @@ export async function createRevenueSubcategory(mainCategoryId: string, name: str
     .single();
   if (error) throw error;
   return data;
+}
+
+/** Admin listing — includes inactive, unlike fetchRevenueSubcategories (used for dropdowns). */
+export async function fetchAllRevenueSubcategories(): Promise<RevenueSubcategory[]> {
+  const { data, error } = await supabase
+    .from('revenue_subcategories')
+    .select('*, main_category:revenue_main_categories(*)')
+    .order('name');
+  if (error) throw error;
+  return data ?? [];
 }
 
 // ============================================================

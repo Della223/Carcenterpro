@@ -1,28 +1,16 @@
 import { supabase } from '../lib/supabase';
-import type { RevenueCategory, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier } from '../types';
+import type { RevenueMainCategory, RevenueSubcategory, ExpenseCategory, ExpenseSubcategory, CostCenter, Supplier } from '../types';
 
-export async function fetchAllRevenueCategories(): Promise<RevenueCategory[]> {
-  const { data, error } = await supabase
-    .from('revenue_categories')
-    .select('*')
-    .order('name');
-  if (error) throw error;
-  return data ?? [];
-}
+// ============================================================
+// Revenue main categories / subcategories - admin CRUD
+// (create + "active only" fetch live in revenue.service.ts, used by the
+// regular sales flow; update/delete/in-use checks live here, matching the
+// split already used for expense categories/subcategories below)
+// ============================================================
 
-export async function createRevenueCategory(name: string): Promise<RevenueCategory> {
+export async function updateRevenueMainCategory(id: string, updates: { name?: string; active?: boolean }): Promise<RevenueMainCategory> {
   const { data, error } = await supabase
-    .from('revenue_categories')
-    .insert({ name })
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-export async function updateRevenueCategory(id: string, updates: { name?: string; active?: boolean }): Promise<RevenueCategory> {
-  const { data, error } = await supabase
-    .from('revenue_categories')
+    .from('revenue_main_categories')
     .update(updates)
     .eq('id', id)
     .select('*')
@@ -31,9 +19,44 @@ export async function updateRevenueCategory(id: string, updates: { name?: string
   return data;
 }
 
-export async function deleteRevenueCategory(id: string): Promise<void> {
-  const { error } = await supabase.from('revenue_categories').delete().eq('id', id);
+export async function deleteRevenueMainCategory(id: string): Promise<void> {
+  const { error } = await supabase.from('revenue_main_categories').delete().eq('id', id);
   if (error) throw error;
+}
+
+export async function checkRevenueMainCategoryInUse(mainCategoryId: string): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('revenues')
+    .select('*', { count: 'exact', head: true })
+    .eq('main_category_id', mainCategoryId);
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
+export async function updateRevenueSubcategory(id: string, updates: { name?: string; active?: boolean }): Promise<RevenueSubcategory> {
+  const { data, error } = await supabase
+    .from('revenue_subcategories')
+    .update(updates)
+    .eq('id', id)
+    .select('*, main_category:revenue_main_categories(*)')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteRevenueSubcategory(id: string): Promise<void> {
+  const { error } = await supabase.from('revenue_subcategories').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export async function checkRevenueSubcategoryInUse(subcategoryId: string): Promise<boolean> {
+  const [revenuesResult, itemsResult] = await Promise.all([
+    supabase.from('revenues').select('*', { count: 'exact', head: true }).eq('subcategory_id', subcategoryId),
+    supabase.from('revenue_items').select('*', { count: 'exact', head: true }).eq('subcategory_id', subcategoryId),
+  ]);
+  if (revenuesResult.error) throw revenuesResult.error;
+  if (itemsResult.error) throw itemsResult.error;
+  return (revenuesResult.count ?? 0) > 0 || (itemsResult.count ?? 0) > 0;
 }
 
 export async function createExpenseCategory(name: string, costCenterId?: string): Promise<ExpenseCategory> {
@@ -114,11 +137,11 @@ export async function deleteCostCenter(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function checkCategoryInUse(table: 'revenues' | 'expenses', categoryId: string): Promise<boolean> {
+export async function checkExpenseCategoryInUse(categoryId: string): Promise<boolean> {
   const { count, error } = await supabase
-    .from(table)
+    .from('expenses')
     .select('*', { count: 'exact', head: true })
-    .eq(table === 'revenues' ? 'category_id' : 'category_id', categoryId);
+    .eq('category_id', categoryId);
   if (error) throw error;
   return (count ?? 0) > 0;
 }
