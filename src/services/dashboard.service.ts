@@ -1,5 +1,11 @@
 import { supabase } from '../lib/supabase';
+import { normalizeCostCenterName } from '../utils/costCenter';
 import type { DashboardKPIs } from '../types';
+
+// Retiradas de sócio não são despesa operacional da loja — ficam fora de
+// "despesa"/"resultado" em todo o Dashboard/Home, expostas à parte.
+// Comparação normalizada — ver utils/costCenter.ts.
+const WITHDRAWAL_COST_CENTER = normalizeCostCenterName('Retiradas de Sócio');
 
 function getPreviousMonth(month: number, year: number): { month: number; year: number } {
   if (month === 1) return { month: 12, year: year - 1 };
@@ -23,7 +29,7 @@ async function fetchMonthData(month: number, year: number) {
       .lte('revenue_date', endDate),
     supabase
       .from('expenses')
-      .select('*, installments:expense_installments!inner(*)')
+      .select('*, cost_center:cost_centers(name), installments:expense_installments!inner(*)')
       .eq('installments.competence_month', month)
       .eq('installments.competence_year', year)
       .neq('confirmation_status', 'pending_confirmation'),
@@ -40,19 +46,25 @@ async function fetchMonthData(month: number, year: number) {
   const quantidadeVendas = revenues.length;
 
   let despesa = 0;
+  let retiradas = 0;
   const categoryTotals: Record<string, number> = {};
   for (const expense of expenses) {
+    const isWithdrawal = normalizeCostCenterName((expense.cost_center as unknown as { name: string } | null)?.name) === WITHDRAWAL_COST_CENTER;
     for (const inst of (expense.installments ?? [])) {
       const instMonth = inst.competence_month ?? expense.competence_month;
       const instYear = inst.competence_year ?? expense.competence_year;
       if (instMonth === month && instYear === year) {
-        despesa += Number(inst.amount);
-        categoryTotals[expense.category_id] = (categoryTotals[expense.category_id] || 0) + Number(inst.amount);
+        if (isWithdrawal) {
+          retiradas += Number(inst.amount);
+        } else {
+          despesa += Number(inst.amount);
+          categoryTotals[expense.category_id] = (categoryTotals[expense.category_id] || 0) + Number(inst.amount);
+        }
       }
     }
   }
 
-  return { receita, despesa, quantidadeVendas, categoryTotals, revenues };
+  return { receita, despesa, retiradas, quantidadeVendas, categoryTotals, revenues };
 }
 
 export async function fetchDashboardKPIs(
@@ -131,6 +143,7 @@ export async function fetchDashboardKPIs(
     variacaoReceita,
     variacaoDespesa,
     totalBudget,
+    retiradasSocio: current.retiradas,
   };
 }
 

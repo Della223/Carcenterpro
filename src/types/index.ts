@@ -298,6 +298,8 @@ export interface DashboardKPIs {
   receitaComparavel?: boolean;
   despesaComparavel?: boolean;
   resultadoComparavel?: boolean;
+  /** Centro de Custo "Retiradas de Sócio" — já excluído de despesaAcumulada/resultado, exposto à parte para exibição informativa. */
+  retiradasSocio: number;
 }
 
 export interface DRESubItem {
@@ -343,6 +345,9 @@ export interface DREData {
   margemBruta: number;
   margemOperacional: number;
   margemLiquida: number;
+  /** Centro de custo "Retiradas de Sócio" — linha de memorando, fora do cálculo do resultado. */
+  retiradas: number;
+  retiradasPorCategoria: DREExpenseCostCenterGroup[];
 }
 
 export interface BudgetExecution {

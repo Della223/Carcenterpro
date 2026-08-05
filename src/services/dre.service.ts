@@ -1,19 +1,27 @@
 import { supabase } from '../lib/supabase';
+import { normalizeCostCenterName } from '../utils/costCenter';
 import type { DREData, DREExpenseCostCenterGroup } from '../types';
 
 // CPV e CSP são custo direto (deduzido antes do Lucro Bruto, junto com a
 // Receita Líquida). IR/CSLL é imposto sobre o lucro (deduzido depois do
-// Resultado Operacional). Qualquer outro centro de custo — incluindo
-// "Deduções" e despesas sem centro de custo definido — permanece em
-// Despesas Operacionais.
-const DIRECT_COST_CENTERS = new Set(['CPV', 'CSP']);
-const TAX_COST_CENTER = 'IR/CSLL';
+// Resultado Operacional). Retiradas de Sócio não são despesa da loja — ficam
+// de fora do resultado inteiramente, exibidas só como linha de memorando.
+// Qualquer outro centro de custo — incluindo "Deduções" e despesas sem
+// centro de custo definido — permanece em Despesas Operacionais.
+// Comparação sempre normalizada (ver utils/costCenter.ts) — nomes vindos do
+// banco podem diferir do literal aqui em espaço/acentuação sem que isso
+// apareça visualmente, causando classificação errada silenciosa.
+const DIRECT_COST_CENTERS = new Set(['CPV', 'CSP'].map(normalizeCostCenterName));
+const TAX_COST_CENTER = normalizeCostCenterName('IR/CSLL');
+const WITHDRAWAL_COST_CENTER = normalizeCostCenterName('Retiradas de Sócio');
 
-type CostCenterBucket = 'direct' | 'tax' | 'operational';
+type CostCenterBucket = 'direct' | 'tax' | 'withdrawal' | 'operational';
 
 function classifyCostCenter(name: string): CostCenterBucket {
-  if (DIRECT_COST_CENTERS.has(name)) return 'direct';
-  if (name === TAX_COST_CENTER) return 'tax';
+  const normalized = normalizeCostCenterName(name);
+  if (DIRECT_COST_CENTERS.has(normalized)) return 'direct';
+  if (normalized === TAX_COST_CENTER) return 'tax';
+  if (normalized === WITHDRAWAL_COST_CENTER) return 'withdrawal';
   return 'operational';
 }
 
@@ -104,9 +112,11 @@ export async function fetchDRE(
   const directMap: ExpenseMap = {};
   const operationalMap: ExpenseMap = {};
   const taxMap: ExpenseMap = {};
+  const withdrawalMap: ExpenseMap = {};
   let custosDiretos = 0;
   let despesasOperacionais = 0;
   let irCsll = 0;
+  let retiradas = 0;
 
   for (const e of expenses) {
     const ccName = (e.cost_center as unknown as { name: string })?.name ?? 'Sem centro de custo';
@@ -124,6 +134,9 @@ export async function fetchDRE(
         } else if (bucket === 'tax') {
           addExpense(taxMap, ccName, catName, subName, amount);
           irCsll += amount;
+        } else if (bucket === 'withdrawal') {
+          addExpense(withdrawalMap, ccName, catName, subName, amount);
+          retiradas += amount;
         } else {
           addExpense(operationalMap, ccName, catName, subName, amount);
           despesasOperacionais += amount;
@@ -135,6 +148,7 @@ export async function fetchDRE(
   const custosDiretosPorCategoria = mapToGroups(directMap);
   const despesasPorCategoria = mapToGroups(operationalMap);
   const irCsllPorCategoria = mapToGroups(taxMap);
+  const retiradasPorCategoria = mapToGroups(withdrawalMap);
 
   const lucroBruto = receitaLiquida - custosDiretos;
   const resultadoOperacional = lucroBruto - despesasOperacionais;
@@ -161,6 +175,8 @@ export async function fetchDRE(
     margemBruta,
     margemOperacional,
     margemLiquida,
+    retiradas,
+    retiradasPorCategoria,
   };
 }
 

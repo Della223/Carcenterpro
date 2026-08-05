@@ -8,7 +8,7 @@ import { fetchDRE, fetchDREComparison } from '../services/dre.service';
 import { formatCurrency, formatPercent, getCurrentCompetence, getPreviousCompetence, getCompetenceString, downloadCSV } from '../utils/format';
 import type { DREData, DREExpenseCostCenterGroup } from '../types';
 
-type DRERowType = 'header' | 'category' | 'subcategory' | 'subsubcategory' | 'subtotal' | 'total';
+type DRERowType = 'header' | 'category' | 'subcategory' | 'subsubcategory' | 'subtotal' | 'total' | 'memo';
 
 interface DRERow {
   key: string;
@@ -20,12 +20,13 @@ interface DRERow {
   expanded?: boolean;
 }
 
-function pushCostCenterGroups(rows: DRERow[], groups: DREExpenseCostCenterGroup[], prefix: string, expandedKeys: Set<string>) {
+function pushCostCenterGroups(rows: DRERow[], groups: DREExpenseCostCenterGroup[], prefix: string, expandedKeys: Set<string>, negate = true) {
+  const sign = negate ? -1 : 1;
   for (const cc of groups) {
     const ccKey = `${prefix}|${cc.category}`;
     const hasCategories = cc.categories.length > 0;
     rows.push({
-      key: ccKey, label: cc.category, value: -cc.amount, type: 'category', indent: 1,
+      key: ccKey, label: cc.category, value: sign * cc.amount, type: 'category', indent: 1,
       expandable: hasCategories, expanded: expandedKeys.has(ccKey),
     });
     if (hasCategories && expandedKeys.has(ccKey)) {
@@ -33,12 +34,12 @@ function pushCostCenterGroups(rows: DRERow[], groups: DREExpenseCostCenterGroup[
         const catKey = `${ccKey}|${cat.category}`;
         const hasSubs = cat.subcategories.length > 0;
         rows.push({
-          key: catKey, label: cat.category, value: -cat.amount, type: 'subcategory', indent: 2,
+          key: catKey, label: cat.category, value: sign * cat.amount, type: 'subcategory', indent: 2,
           expandable: hasSubs, expanded: expandedKeys.has(catKey),
         });
         if (hasSubs && expandedKeys.has(catKey)) {
           for (const sub of cat.subcategories) {
-            rows.push({ key: `${catKey}|${sub.name}`, label: sub.name, value: -sub.amount, type: 'subsubcategory', indent: 3 });
+            rows.push({ key: `${catKey}|${sub.name}`, label: sub.name, value: sign * sub.amount, type: 'subsubcategory', indent: 3 });
           }
         }
       }
@@ -46,15 +47,16 @@ function pushCostCenterGroups(rows: DRERow[], groups: DREExpenseCostCenterGroup[
   }
 }
 
-function findInGroups(groups: DREExpenseCostCenterGroup[], parts: string[]): number {
+function findInGroups(groups: DREExpenseCostCenterGroup[], parts: string[], negate = true): number {
+  const sign = negate ? -1 : 1;
   const cc = groups.find((c) => c.category === parts[1]);
   if (!cc) return 0;
-  if (parts.length === 2) return -cc.amount;
+  if (parts.length === 2) return sign * cc.amount;
   const cat = cc.categories.find((c) => c.category === parts[2]);
   if (!cat) return 0;
-  if (parts.length === 3) return -cat.amount;
+  if (parts.length === 3) return sign * cat.amount;
   const sub = cat.subcategories.find((s) => s.name === parts[3]);
-  return sub ? -sub.amount : 0;
+  return sub ? sign * sub.amount : 0;
 }
 
 /** Formatação contábil: negativos entre parênteses, sem sinal solto. */
@@ -143,6 +145,14 @@ export default function DREScreen() {
     pushCostCenterGroups(rows, currentDRE.irCsllPorCategoria, 'tax', expandedKeys);
     rows.push({ key: 'resultado-liquido', label: '(=) Resultado Líquido', value: currentDRE.resultadoLiquido, type: 'total', indent: 0 });
 
+    if (currentDRE.retiradas > 0) {
+      rows.push({
+        key: 'retiradas', label: 'Memorando: Retiradas de Sócio (não compõe o resultado)', value: currentDRE.retiradas,
+        type: 'memo', indent: 0,
+      });
+      pushCostCenterGroups(rows, currentDRE.retiradasPorCategoria, 'withdrawal', expandedKeys, false);
+    }
+
     return rows;
   }, [currentDRE, expandedKeys]);
 
@@ -156,6 +166,7 @@ export default function DREScreen() {
     if (key === 'resultado-operacional') return prev.resultadoOperacional;
     if (key === 'ir-csll') return -prev.irCsll;
     if (key === 'resultado-liquido') return prev.resultadoLiquido;
+    if (key === 'retiradas') return prev.retiradas;
 
     const parts = key.split('|');
     if (parts[0] === 'rev') {
@@ -168,6 +179,7 @@ export default function DREScreen() {
     if (parts[0] === 'direct') return findInGroups(prev.custosDiretosPorCategoria, parts);
     if (parts[0] === 'oper') return findInGroups(prev.despesasPorCategoria, parts);
     if (parts[0] === 'tax') return findInGroups(prev.irCsllPorCategoria, parts);
+    if (parts[0] === 'withdrawal') return findInGroups(prev.retiradasPorCategoria, parts, false);
     return 0;
   };
 
@@ -212,6 +224,19 @@ export default function DREScreen() {
     exportRows.push({ key: 'ir-csll', label: '(-) IR/CSLL', value: -currentDRE.irCsll });
     pushExpenseGroups(currentDRE.irCsllPorCategoria, 'tax');
     exportRows.push({ key: 'resultado-liquido', label: '(=) Resultado Líquido', value: currentDRE.resultadoLiquido });
+
+    if (currentDRE.retiradas > 0) {
+      exportRows.push({ key: 'retiradas', label: 'Memorando: Retiradas de Sócio (não compõe o resultado)', value: currentDRE.retiradas });
+      for (const cc of currentDRE.retiradasPorCategoria) {
+        exportRows.push({ key: `withdrawal|${cc.category}`, label: `  ${cc.category}`, value: cc.amount });
+        for (const cat of cc.categories) {
+          exportRows.push({ key: `withdrawal|${cc.category}|${cat.category}`, label: `    ${cat.category}`, value: cat.amount });
+          for (const sub of cat.subcategories) {
+            exportRows.push({ key: `withdrawal|${cc.category}|${cat.category}|${sub.name}`, label: `      ${sub.name}`, value: sub.amount });
+          }
+        }
+      }
+    }
 
     const rows: (string | number)[][] = exportRows.map((row) => {
       const pct = currentDRE.receitaBruta > 0 ? (Math.abs(row.value) / currentDRE.receitaBruta) * 100 : 0;
@@ -298,11 +323,13 @@ export default function DREScreen() {
                   const isCategory = row.type === 'category';
                   const isSubcategory = row.type === 'subcategory';
                   const isSubsubcategory = row.type === 'subsubcategory';
+                  const isMemo = row.type === 'memo';
                   const isPositive = row.value >= 0;
                   const pctOfGross = currentDRE && currentDRE.receitaBruta > 0 ? (Math.abs(row.value) / currentDRE.receitaBruta) * 100 : 0;
 
                   let rowClass = '';
-                  if (isHeader) rowClass = 'bg-ink-50 font-semibold text-ink-900';
+                  if (isMemo) rowClass = 'bg-ink-100/60 italic text-ink-600 border-t-2 border-dashed border-ink-300';
+                  else if (isHeader) rowClass = 'bg-ink-50 font-semibold text-ink-900';
                   else if (isTotal) rowClass = 'bg-primary-50/50 font-bold text-ink-900 border-t-2 border-primary-200';
                   else if (isCategory) rowClass = 'text-ink-700 font-medium';
                   else if (isSubcategory) rowClass = 'text-ink-600';
@@ -326,7 +353,7 @@ export default function DREScreen() {
                           <span className={row.expandable ? 'hover:underline' : ''}>{row.label}</span>
                         </div>
                       </td>
-                      <td className={`px-6 py-3 text-sm text-right whitespace-nowrap ${isTotal ? 'font-bold' : isHeader ? 'font-semibold' : ''} ${isPositive ? 'text-ink-900' : 'text-error-600'}`}>
+                      <td className={`px-6 py-3 text-sm text-right whitespace-nowrap ${isTotal ? 'font-bold' : isHeader ? 'font-semibold' : ''} ${isMemo ? 'text-ink-600' : isPositive ? 'text-ink-900' : 'text-error-600'}`}>
                         {formatDREValue(row.value)}
                       </td>
                       <td className="px-6 py-3 text-sm text-right whitespace-nowrap text-ink-500">

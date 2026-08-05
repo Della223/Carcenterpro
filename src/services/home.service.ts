@@ -3,6 +3,7 @@ import { fetchRevenues } from './revenue.service';
 import { fetchExpenses } from './expense.service';
 import { fetchMarketingPosts } from './marketing.service';
 import { fetchBudgets, applyAutomaticBudgets } from './budget.service';
+import { normalizeCostCenterName } from '../utils/costCenter';
 import type { CalendarDayInfo, HomeInsight, DashboardKPIs, Expense, Revenue, Budget, MarketingPost } from '../types';
 
 export interface HomeData {
@@ -15,6 +16,11 @@ export interface HomeData {
   consecutiveEmptyDays: number;
   insights: HomeInsight[];
 }
+
+// Same exclusion as dashboard.service.ts — retiradas de sócio não são
+// despesa operacional, então não podem entrar na baseline de comparação.
+// Comparação normalizada — ver utils/costCenter.ts.
+const WITHDRAWAL_COST_CENTER = normalizeCostCenterName('Retiradas de Sócio');
 
 function getLastDayOfMonth(month: number, year: number): number {
   return new Date(year, month, 0).getDate();
@@ -54,6 +60,7 @@ function computeEquivalentPeriodBaseline(
   let despesaMesAnterior = 0;
   for (const e of expenses) {
     if (e.confirmation_status === 'pending_confirmation') continue;
+    if (normalizeCostCenterName(e.cost_center?.name) === WITHDRAWAL_COST_CENTER) continue;
     for (const inst of e.installments ?? []) {
       const instMonth = inst.competence_month ?? e.competence_month;
       const instYear = inst.competence_year ?? e.competence_year;

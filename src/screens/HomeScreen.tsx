@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Repeat, AlertTriangle } from 'lucide-react';
+import { Repeat, AlertTriangle, Wallet } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ui/Toast';
 import ErrorState from '../components/ui/ErrorState';
@@ -145,6 +145,20 @@ export default function HomeScreen() {
 
       {/* 2. KPIs */}
       <ExecutivePanel kpis={data.kpis} />
+
+      {/* Retiradas de Sócio — informativo, fora do resultado operacional */}
+      {data.kpis.retiradasSocio > 0 && (
+        <div className="card p-4 border border-ink-200 bg-ink-50/50">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-ink-500" />
+              <span className="text-sm font-medium text-ink-700">Retiradas de Sócio no Mês</span>
+            </div>
+            <span className="text-sm font-semibold text-ink-900">{formatCurrency(data.kpis.retiradasSocio)}</span>
+          </div>
+          <p className="mt-1 text-xs text-ink-400">Informativo — não entra no resultado operacional da loja.</p>
+        </div>
+      )}
 
       {/* 3. Assistente Gerencial */}
       <ManagerAssistant insights={data.insights} />
